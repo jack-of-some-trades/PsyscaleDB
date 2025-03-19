@@ -1,0 +1,28 @@
+name: ${PROJECT_NAME}
+
+services:
+  TimescaleDB:
+    image: timescale/timescaledb-ha:pg17
+    ports:
+      - "${TIMESCALE_PORT}:5432"
+    environment:
+      POSTGRES_USER: ${TIMESCALE_USER}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
+      POSTGRES_DB: ${TIMESCALE_DB_NAME}
+    volumes:
+      - TimescaleData:/home/postgres/pgdata/data
+    networks:
+      - database
+    restart: on-failure
+
+volumes:
+  TimescaleData:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${TIMESCALE_VOLUME_PATH}
+
+networks:
+  database:
+    driver: bridge
