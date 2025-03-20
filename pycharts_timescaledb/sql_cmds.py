@@ -16,7 +16,7 @@ from psycopg import sql
 
 from .orm import AssetTable
 
-# pylint: disable="missing-function-docstring"
+# pylint: disable="missing-function-docstring",'protected-access','line-too-long'
 
 # region -------- -------- -------- -------- PSQL CMDS -------- -------- -------- --------
 
@@ -156,13 +156,14 @@ def delete_items(schema: str, table: str, sql_filter: sql.Composable) -> sql.Com
 def create_symbol_table() -> sql.Composed:
     return sql.SQL(
         """
-        CREATE TABLE IF NOT EXISTS {schema_name}.{table_name}(
+        CREATE TABLE {schema_name}.{table_name}(
             pkey SERIAL PRIMARY KEY,
             symbol TEXT NOT NULL,
             source TEXT NOT NULL,
             exchange TEXT NOT NULL,
             asset_class TEXT NOT NULL,
             name TEXT NOT NULL,
+            stored BOOLEAN NOT NULL DEFAULT False,
             attrs jsonb,
             UNIQUE (symbol, source, exchange)
         );
@@ -209,7 +210,7 @@ def insert_symbols() -> sql.Composed:
     )
 
 
-def update_security(args: list[str]) -> sql.Composed:
+def update_symbol(args: list[str]) -> sql.Composed:
     return sql.SQL(
         """
         UPDATE {schema_name}.{table_name} SET
@@ -220,6 +221,114 @@ def update_security(args: list[str]) -> sql.Composed:
         schema_name=sql.Identifier(Schema.SECURITY),
         table_name=sql.Identifier(AssetTbls.SYMBOLS),
         update_args=sql.SQL(", ").join([_filter(arg, "=") for arg in args]),
+    )
+
+
+# endregion
+
+# region -------- -------- Timeseries Metadata Table Commands -------- --------
+# Table to store metadata on each asset that has stored data. specifically time
+# that their data starts and ends for each timeframe
+
+
+def create_timeseries_metadata_view(schema: str) -> sql.Composed:
+    return sql.SQL(
+        """
+        CREATE MATERIALIZED VIEW {schema_name}.{view_name} AS
+        WITH all_tables AS ({_available_tables} UNION ALL {_available_aggregates}),
+        _metadata AS (
+            SELECT
+                dt.pkey,
+                t.table_name,
+                t.timeframe,
+                t.is_raw_data,
+                t.trading_hours_type,
+                dt.start_date,
+                dt.end_date
+            FROM all_tables t
+            CROSS JOIN LATERAL get_timeseries_date_range({schema_arg}, t.table_name) AS dt
+        )
+        SELECT * FROM _metadata;
+    """
+    ).format(
+        schema_arg=sql.Literal(schema),
+        schema_name=sql.Identifier(schema),
+        view_name=sql.Identifier(SeriesTbls._METADATA),
+        _available_tables=_available_tables(schema),
+        _available_aggregates=_available_aggregates(schema),
+    )
+
+
+def _available_tables(schema: str) -> sql.Composable:
+    # Sub-query to get all the table names in a given timeseries schema
+    # is_raw_data = True because it's a table. By nature is must be raw inserted data
+    return sql.SQL(
+        r"""
+        SELECT 
+            tablename AS table_name,
+            substring(tablename FROM '_(\d+)(?:_raw)?(?:_(ext|rth|eth))?$')::integer AS timeframe,
+            TRUE AS is_raw_data,
+            CASE 
+                WHEN tablename ~ '_ext$' THEN 'ext'
+                WHEN tablename ~ '_rth$' THEN 'rth'
+                WHEN tablename ~ '_eth$' THEN 'eth'
+                ELSE 'none'
+            END AS trading_hours_type
+        FROM pg_catalog.pg_tables 
+        """
+        "WHERE schemaname = {schema_name} "
+        r""" AND tablename ~ '^[\D]+_\d+(_raw)?(_(ext|rth|eth))?$'
+        AND tablename NOT LIKE 'pg\_%'
+    """
+    ).format(schema_name=sql.Literal(schema))
+
+
+def _available_aggregates(schema: str) -> sql.Composable:
+    # Sub-query to get all the continuous aggregate names in a given timeseries schema
+    # is_raw_data = False because it's a continuous agg. By nature is must be derived.
+    return sql.SQL(
+        r"""
+        SELECT 
+            user_view_name AS table_name,
+            substring(user_view_name FROM '_(\d+)(?:_raw)?(?:_(ext|rth|eth))?$')::INTEGER AS timeframe,
+            FALSE AS is_raw_data,
+            CASE 
+                WHEN user_view_name ~ '_ext$' THEN 'ext'
+                WHEN user_view_name ~ '_rth$' THEN 'rth'
+                WHEN user_view_name ~ '_eth$' THEN 'eth'
+                ELSE 'none'
+            END AS trading_hours_type
+        FROM _timescaledb_catalog.continuous_agg 
+        """
+        "WHERE user_view_schema = {schema_name}"
+        r""" AND user_view_name ~ '^[\D]+_\d+(_raw)?(_(ext|rth|eth))?$'
+        AND user_view_name NOT LIKE 'pg\_%'
+        """
+    ).format(schema_name=sql.Literal(schema))
+
+
+def create_timeseries_metadata_subfunction() -> sql.Composed:
+    "SQL Dynamic Function to get the Stored Date-Range of all Assets in a Timeseries Table"
+    return sql.SQL(
+        """
+        CREATE OR REPLACE FUNCTION get_timeseries_date_range(_schema TEXT, _table_name TEXT)
+        RETURNS TABLE(pkey INT, start_date TIMESTAMPTZ, end_date TIMESTAMPTZ) AS
+        $$
+        BEGIN
+            RETURN QUERY EXECUTE format(
+                'SELECT pkey, MIN(dt), MAX(dt) FROM %I.%I GROUP BY pkey',
+                _schema, _table_name
+            );
+        END;
+        $$ LANGUAGE plpgsql;
+    """
+    ).format()
+
+
+def refresh_timeseries_metadata_view(schema: str) -> sql.Composed:
+    return sql.SQL("REFRESH MATERIALIZED VIEW {schema_name}.{view_name};").format(
+        schema_name=sql.Identifier(schema),
+        view_name=sql.Identifier(SeriesTbls._METADATA),
     )
 
 
@@ -242,7 +351,8 @@ def create_origin_table(schema: str) -> sql.Composed:
         );
     """
     ).format(
-        schema_name=sql.Identifier(schema), table_name=sql.Identifier(SeriesTbls.ORIGIN)
+        schema_name=sql.Identifier(schema),
+        table_name=sql.Identifier(SeriesTbls._ORIGIN),
     )
 
 
@@ -265,7 +375,7 @@ def select_origin(
         "SELECT {origin} FROM {schema_name}.{table_name} WHERE asset_class = {asset_class};"
     ).format(
         schema_name=sql.Identifier(schema),
-        table_name=sql.Identifier(SeriesTbls.ORIGIN),
+        table_name=sql.Identifier(SeriesTbls._ORIGIN),
         origin=sql.Literal(origin),
         asset_class=sql.Literal(asset_class),
     )
@@ -275,7 +385,8 @@ def _select_all_origins(schema: str) -> sql.Composed:
     return sql.SQL(
         "SELECT (asset_class, origin_rth, origin_eth, origin_htf) FROM {schema_name}.{table_name};"
     ).format(
-        schema_name=sql.Identifier(schema), table_name=sql.Identifier(SeriesTbls.ORIGIN)
+        schema_name=sql.Identifier(schema),
+        table_name=sql.Identifier(SeriesTbls._ORIGIN),
     )
 
 
@@ -291,7 +402,7 @@ def insert_origin(
         "VALUES ({asset_class}, {origin_rth}, {origin_eth}, {origin_htf});"
     ).format(
         schema_name=sql.Identifier(schema),
-        table_name=sql.Identifier(SeriesTbls.ORIGIN),
+        table_name=sql.Identifier(SeriesTbls._ORIGIN),
         asset_class=sql.Literal(asset_class),
         origin_rth=sql.Literal(str(rth_origin)),
         origin_eth=sql.Literal(str(eth_origin)),
@@ -316,7 +427,7 @@ def update_origin(
         """
     ).format(
         schema_name=sql.Identifier(schema),
-        table_name=sql.Identifier(SeriesTbls.ORIGIN),
+        table_name=sql.Identifier(SeriesTbls._ORIGIN),
         asset_class=sql.Literal(asset_class),
         origin_rth=sql.Literal(str(rth_origin)),
         origin_eth=sql.Literal(str(eth_origin)),
@@ -329,7 +440,7 @@ def delete_origin(schema: str, asset_class: str) -> sql.Composed:
         "DELETE FROM {schema_name}.{table_name} WHERE asset_class = {asset_class};"
     ).format(
         schema_name=sql.Identifier(schema),
-        table_name=sql.Identifier(SeriesTbls.ORIGIN),
+        table_name=sql.Identifier(SeriesTbls._ORIGIN),
         asset_class=sql.Literal(asset_class),
     )
 
@@ -579,7 +690,9 @@ class Generic(StrEnum):
 class SeriesTbls(StrEnum):
     "Raw & Aggregated Timeseries Data Tables"
 
-    ORIGIN = auto()
+    _ORIGIN = auto()  # Tables with a leading underscore are filtered out
+    _METADATA = auto()  # When reconstructing a Config from table names
+    _METADATA_FUNC = auto()
     TICK = auto()
     MINUTE = auto()
     AGGREGATE = auto()
@@ -634,7 +747,8 @@ SCHEMA_MAP: SchemaMap = {
     # AssetTbls.SPLITS: Schema.SECURITY,    # Not Implemented Yet
     # AssetTbls.EARNINGS: Schema.SECURITY,    # Not Implemented Yet
     # AssetTbls.DIVIDENDS: Schema.SECURITY,    # Not Implemented Yet
-    SeriesTbls.ORIGIN: None,  # Table Applies to TICK, MINUTE and AGGREGATE
+    SeriesTbls._ORIGIN: None,  # Table Applies to TICK, MINUTE and AGGREGATE
+    SeriesTbls._METADATA: None,  # Table Applies to TICK, MINUTE and AGGREGATE
     SeriesTbls.AGGREGATE: None,  # Table Applies to TICK, MINUTE and AGGREGATE
     SeriesTbls.RAW_AGGREGATE: None,  # Table Applies to MINUTE and AGGREGATE
     SeriesTbls.TICK: Schema.TICK_DATA,
@@ -647,7 +761,9 @@ SCHEMA_MAP: SchemaMap = {
 OPERATION_MAP: OperationMap = {
     # Mapping that defines the SQL Composing Function for each Operation and Table Combination
     Operation.CREATE: {
-        SeriesTbls.ORIGIN: create_origin_table,
+        SeriesTbls._ORIGIN: create_origin_table,
+        SeriesTbls._METADATA: create_timeseries_metadata_view,
+        SeriesTbls._METADATA_FUNC: create_timeseries_metadata_subfunction,
         SeriesTbls.TICK: create_tick_table,
         SeriesTbls.MINUTE: create_raw_aggregate_table,
         SeriesTbls.AGGREGATE: create_continuous_aggrigate,
@@ -663,23 +779,23 @@ OPERATION_MAP: OperationMap = {
         # AssetTbls.SPLITS: ,
         # AssetTbls.EARNINGS: ,
         # AssetTbls.DIVIDENDS: ,
-        SeriesTbls.ORIGIN: insert_origin,
+        SeriesTbls._ORIGIN: insert_origin,
     },
     Operation.UPSERT: {},
     Operation.UPDATE: {
-        SeriesTbls.ORIGIN: update_origin,
+        SeriesTbls._ORIGIN: update_origin,
     },
     Operation.SELECT: {
         Generic.TABLE: list_tables,
         Generic.SCHEMA: list_schemas,
-        SeriesTbls.ORIGIN: select_origin,
+        SeriesTbls._ORIGIN: select_origin,
         AssetTbls.SYMBOLS: select_symbols,
         # AssetTbls.SPLITS: ,
         # AssetTbls.EARNINGS: ,
         # AssetTbls.DIVIDENDS: ,
     },
     Operation.DELETE: {
-        SeriesTbls.ORIGIN: delete_origin,
+        SeriesTbls._ORIGIN: delete_origin,
     },
     Operation.DROP: {
         Generic.SCHEMA: drop_schema,

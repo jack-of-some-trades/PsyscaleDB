@@ -259,7 +259,7 @@ class TimeseriesConfig:
         * 'default' can be passed as a key to override stated default parameter.
     """
 
-    asset_types: Iterable[str]
+    asset_classes: Iterable[str]
     rth_origins: dict[str, Timestamp | None] = field(default_factory=dict)
     eth_origins: dict[str, Timestamp | None] = field(default_factory=dict)
     htf_origins: dict[str, Timestamp | None] = field(default_factory=dict)
@@ -290,7 +290,7 @@ class TimeseriesConfig:
         _default_raw_aggs = _get_ensured(self.inserted_aggregate_periods, "default", [])
         _default_priority = self.prioritize_rth.get("default", True)
 
-        for asset_class in self.asset_types:
+        for asset_class in self.asset_classes:
             asset_aggregates = _get_ensured(
                 self.aggregate_periods, asset_class, _default_aggs
             )
@@ -387,7 +387,7 @@ class TimeseriesConfig:
     def all_tables(
         self, asset_class: str, *, include_raw: bool = True
     ) -> List[AssetTable]:
-        if asset_class not in self.asset_types:
+        if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
 
         base_list = self._inserted_tables.get(asset_class, []) if include_raw else []
@@ -399,7 +399,7 @@ class TimeseriesConfig:
         )
 
     def std_tables(self, asset_class: str, inserted: bool = False) -> List[AssetTable]:
-        if asset_class not in self.asset_types:
+        if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
         if not inserted:
             return self._std_tables[asset_class]
@@ -409,7 +409,7 @@ class TimeseriesConfig:
             )
 
     def rth_tables(self, asset_class: str, inserted: bool = False) -> List[AssetTable]:
-        if asset_class not in self.asset_types:
+        if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
         if not inserted:
             return self._rth_tables[asset_class]
@@ -419,7 +419,7 @@ class TimeseriesConfig:
             )
 
     def eth_tables(self, asset_class: str, inserted: bool = False) -> List[AssetTable]:
-        if asset_class not in self.asset_types:
+        if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
         if not inserted:
             return self._eth_tables[asset_class]
@@ -431,7 +431,7 @@ class TimeseriesConfig:
     def inserted_tables(
         self, asset_class: str, rth: Literal["all", "std", "rth", "eth"] = "all"
     ) -> List[AssetTable]:
-        if asset_class not in self.asset_types:
+        if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
         if rth == "all":
             return self._inserted_tables[asset_class]
@@ -524,11 +524,16 @@ class TimeseriesConfig:
         Origin Timestamps must be given in a dictionary of
         [asset_class:str, (rth_origin, eth_origin, htf_origin)]
         """
-        if "origin" in names:
-            names.remove("origin")  # Only table that isn't a Data Table
+        log.debug(
+            "Filtered out table names %s when reconstructing TimeseriesConfig from Database table names.",
+            [name for name in names if name.startswith("_")],
+        )
 
         tables = []
         for name in names:
+            # Filter out All Table names that begin with an '_'. They are metadata.
+            if name.startswith("_"):
+                continue
             try:
                 tables.append(AssetTable.from_table_name(name))
             except ValueError:

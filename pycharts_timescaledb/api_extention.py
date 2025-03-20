@@ -18,7 +18,7 @@ from .api import TimeScaleDB, TupleCursor
 
 log = logging.getLogger("pycharts-timescaledb")
 
-# pylint: disable='invalid-name'
+# pylint: disable='invalid-name','protected-access'
 
 
 class TimescaleDB_EXT(TimeScaleDB):
@@ -56,6 +56,10 @@ class TimescaleDB_EXT(TimeScaleDB):
 
             # Create Security Tables as Needed.
             self._configure_security_tables(cursor)
+
+            # Ensure a sub_function needed for the _metadata table is present
+            log.debug("Ensuring Timeseries _metadata sub-function exists.")
+            cursor.execute(self[Op.CREATE, SeriesTbls._METADATA_FUNC]())
 
             # Create Each Class of Timeseries Table
             if tick_tables is not None:
@@ -99,12 +103,20 @@ class TimescaleDB_EXT(TimeScaleDB):
         )
 
         # Ensure Origins Timestamp Table exists in the schema
-        if SeriesTbls.ORIGIN not in tables:
-            log.info("Creating '%s'.'origin' Table\n", schema)
-            cursor.execute(self[Op.CREATE, SeriesTbls.ORIGIN](schema))
+        if SeriesTbls._ORIGIN not in tables:
+            log.info("Creating '%s'.'%s' Table\n", schema, SeriesTbls._ORIGIN)
+            cursor.execute(self[Op.CREATE, SeriesTbls._ORIGIN](schema))
         else:
-            tables -= {SeriesTbls.ORIGIN.value}
-            log.debug("'%s'.'origins' Table Already Exists\n", schema)
+            tables -= {SeriesTbls._ORIGIN.value}
+            log.debug("'%s'.'%s' Table Already Exists\n", schema, SeriesTbls._ORIGIN)
+
+        # Ensure Stored Range Metadata View exists in the schema
+        if SeriesTbls._METADATA not in tables:
+            log.info("Creating '%s'.'%s' Table\n", schema, SeriesTbls._METADATA)
+            cursor.execute(self[Op.CREATE, SeriesTbls._METADATA](schema))
+        else:
+            tables -= {SeriesTbls._METADATA.value}
+            log.debug("'%s'.'%s' Table Already Exists\n", schema, SeriesTbls._METADATA)
 
         stored_config = self.table_config[schema]
 
@@ -127,7 +139,7 @@ class TimescaleDB_EXT(TimeScaleDB):
         config: TimeseriesConfig,
         stored_config: TimeseriesConfig,
     ):
-        additions = set(config.asset_types).difference(stored_config.asset_types)
+        additions = set(config.asset_classes).difference(stored_config.asset_classes)
         if len(additions) == 0:
             log.info("No Asset_classes need to be Added.")
             return
@@ -142,7 +154,7 @@ class TimescaleDB_EXT(TimeScaleDB):
             }
             log.info("Inserting Origin Timestamps: %s", origin_args)
             cursor.execute(
-                self[Op.INSERT, SeriesTbls.ORIGIN](schema, asset, **origin_args)
+                self[Op.INSERT, SeriesTbls._ORIGIN](schema, asset, **origin_args)
             )
 
             # Generate Raw insertion tables
@@ -178,7 +190,9 @@ class TimescaleDB_EXT(TimeScaleDB):
         config: TimeseriesConfig,
         stored_config: TimeseriesConfig,
     ):
-        asset_updates = set(config.asset_types).intersection(stored_config.asset_types)
+        asset_updates = set(config.asset_classes).intersection(
+            stored_config.asset_classes
+        )
         if len(asset_updates) == 0:
             log.info("No Asset_classes need to be Updated.")
             return
@@ -212,7 +226,7 @@ class TimescaleDB_EXT(TimeScaleDB):
             }
             log.info("Updating Origin Timestamps: %s", origin_args)
             cursor.execute(
-                self[Op.UPDATE, SeriesTbls.ORIGIN](schema, asset, **origin_args)
+                self[Op.UPDATE, SeriesTbls._ORIGIN](schema, asset, **origin_args)
             )
 
             # Remove All Calculated Data Tables
@@ -276,7 +290,7 @@ class TimescaleDB_EXT(TimeScaleDB):
         stored_config: TimeseriesConfig,
     ):
 
-        removals = set(stored_config.asset_types).difference(config.asset_types)
+        removals = set(stored_config.asset_classes).difference(config.asset_classes)
         if len(removals) == 0:
             log.info("No Asset_classes need to be removed.")
             return
@@ -303,7 +317,7 @@ class TimescaleDB_EXT(TimeScaleDB):
                 continue
 
             log.info("Removing Asset Class: %s", asset)
-            cursor.execute(self[Op.DELETE, SeriesTbls.ORIGIN](schema, asset))
+            cursor.execute(self[Op.DELETE, SeriesTbls._ORIGIN](schema, asset))
 
             # Must delete Largest Aggregates First
             tbls = stored_config.all_tables(asset)

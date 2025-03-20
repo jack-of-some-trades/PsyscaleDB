@@ -41,7 +41,7 @@ DEFAULT_YML_PATH = Path(__file__).parent.joinpath("timescale.yml").as_posix()
 TIMESCALE_IMAGE = "timescale/timescaledb-ha:pg17"
 POOL_GEN_TIMEOUT = 5  # seconds to wait for the connection pool to be generated
 # endregion
-
+# pylint: disable='protected-access'
 
 DictCursor: TypeAlias = pg.Cursor[pg_rows.DictRow]
 TupleCursor: TypeAlias = pg.Cursor[pg_rows.TupleRow]
@@ -273,7 +273,7 @@ class TimeScaleDB:
                 origin_map = {}
                 try:
                     cursor.execute(
-                        self[Op.SELECT, SeriesTbls.ORIGIN](schema, _all=True)
+                        self[Op.SELECT, SeriesTbls._ORIGIN](schema, _all=True)
                     )
                     for (asset, *origins), *_ in cursor.fetchall():
                         # Cursed parsing for the cursor response tuple.
@@ -290,13 +290,13 @@ class TimeScaleDB:
                 tbl_names = [
                     rsp[0]
                     for rsp in cursor.fetchall()
-                    if rsp[0] != SeriesTbls.ORIGIN.value
+                    if rsp[0] != SeriesTbls._ORIGIN.value
                 ]
                 config = TimeseriesConfig.from_table_names(tbl_names, origin_map)
                 self.table_config[schema] = config
 
                 # ---- ---- Check that all the origin times are preset ---- ----
-                missing_asset_origins = set(config.asset_types).difference(
+                missing_asset_origins = set(config.asset_classes).difference(
                     origin_map.keys()
                 )
                 if len(missing_asset_origins) > 0:
@@ -308,7 +308,7 @@ class TimeScaleDB:
                     )
 
         # Give a notification on how to setup the database if it appears like it hasn't been
-        all_assets = {chain(map(lambda x: x.asset_types, self.table_config.values()))}
+        all_assets = {chain(map(lambda x: x.asset_classes, self.table_config.values()))}
         if len(all_assets) == 0:
             log.warning(
                 "No Asset Types Detected in the Database. To Initialize the Database call "

@@ -22,6 +22,7 @@ def main():
 # region ---- ---- ---- Example Standard Database Configurations ---- ---- ----
 
 # Make this an empty list to have the option to clear the entire database
+# STD_ASSET_LIST = []
 STD_ASSET_LIST = ["us_fund", "us_stock", "crypto"]
 
 STD_MINUTE_CONFIG = tsdb.TimeseriesConfig(
