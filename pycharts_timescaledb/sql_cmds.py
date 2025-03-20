@@ -234,7 +234,7 @@ def update_symbol(args: list[str]) -> sql.Composed:
 def create_timeseries_metadata_view(schema: str) -> sql.Composed:
     return sql.SQL(
         """
-        CREATE MATERIALIZED VIEW {schema_name}.{view_name} AS
+        CREATE MATERIALIZED VIEW IF NOT EXISTS {schema_name}.{view_name} AS
         WITH all_tables AS ({_available_tables} UNION ALL {_available_aggregates}),
         _metadata AS (
             SELECT
@@ -802,7 +802,7 @@ OPERATION_MAP: OperationMap = {
         Generic.TABLE: drop_table,
         Generic.VIEW: drop_materialized_view,
     },
-    Operation.REFRESH: {},
+    Operation.REFRESH: {SeriesTbls._METADATA: refresh_timeseries_metadata_view},
 }
 
 

@@ -110,13 +110,9 @@ class TimescaleDB_EXT(TimeScaleDB):
             tables -= {SeriesTbls._ORIGIN.value}
             log.debug("'%s'.'%s' Table Already Exists\n", schema, SeriesTbls._ORIGIN)
 
-        # Ensure Stored Range Metadata View exists in the schema
-        if SeriesTbls._METADATA not in tables:
-            log.info("Creating '%s'.'%s' Table\n", schema, SeriesTbls._METADATA)
-            cursor.execute(self[Op.CREATE, SeriesTbls._METADATA](schema))
-        else:
-            tables -= {SeriesTbls._METADATA.value}
-            log.debug("'%s'.'%s' Table Already Exists\n", schema, SeriesTbls._METADATA)
+        # Create Metadata View if it does not exist in the schema (wont be listed in tables)
+        log.info("Ensuring Creation of '%s'.'%s' View\n", schema, SeriesTbls._METADATA)
+        cursor.execute(self[Op.CREATE, SeriesTbls._METADATA](schema))
 
         stored_config = self.table_config[schema]
 
