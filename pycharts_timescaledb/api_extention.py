@@ -1,9 +1,9 @@
 """Extension to the TimescaleDB Class to add Function Scripts that Configure and Manage Data"""
 
 import logging
-from typing import Optional
+from typing import Literal, Optional, Tuple
 
-from pandas import Timedelta
+from pandas import DataFrame, Series, Timedelta
 
 from .orm import TimeseriesConfig
 from .sql_cmds import (
@@ -55,7 +55,7 @@ class TimescaleDB_EXT(TimeScaleDB):
             cursor.connection.commit()
 
             # Create Security Tables as Needed.
-            self._configure_security_tables(cursor)
+            self._ensure_symbols_table_exists(cursor)
 
             # Ensure a sub_function needed for the _metadata table is present
             log.debug("Ensuring Timeseries _metadata sub-function exists.")
@@ -75,9 +75,100 @@ class TimescaleDB_EXT(TimeScaleDB):
 
     # endregion
 
+    # region ---- ---- ---- Public Security Sub-routines ---- ---- ----
+
+    def upsert_securities(
+        self,
+        symbols: DataFrame,
+        source: str,
+        *,
+        on_conflict: Literal["update", "ignore"] = "update",
+    ) -> Tuple[Series, Series]:
+        """
+        Insert the Dataframe of symbols into the database.
+        Primary Each for each entry is (Ticker, Exchange, Source)
+
+        -- PARAMS --
+
+        symbols: Dataframe.
+            - Required Columns {ticker:str, name:str, exchange:str}:
+                -- symbol:str - Ticker Symbol abbreviation
+                -- name:Str - Full String Name of the Symbol
+                -- exchange:str - Abbrv. Exchange Name for the symbol
+                -- asset_class:str - Type of asset, This must match the Timeseries Config
+                    asset_classes otherwise data for this symbol cannot be inserted into the database.
+
+            - Any Extra Columns will be packaged into JSON and dumped into an 'attrs' Dictionary.
+            To prevent bloat, drop all columns that will not be used.
+
+        source: string.
+            - string representation of what API Sourced the symbol
+            - e.g. Alpaca, IBKR, Polygon, Coinbase, etc.
+
+        on_conflict: Literal["update", "ignore"] : default = "update"
+            Update or Do Nothing when given a symbol that has a conflicting primary key.
+
+        -- RETURNS --
+            Tuple of [Series, Series]
+            First Series Object is inserted Symbols
+            Second Series Object is Updated Symbols
+        """
+        if not isinstance(source, str) or source == "":
+            log.error("Cannot Insert Symbols, Invalid Source, Source = %s", source)
+            return Series(), Series()
+        if not isinstance(symbols, DataFrame):
+            log.error("Cannot Insert Symbols, Invalid Symbols Argument")
+            return Series(), Series()
+
+        symbols.columns = symbols.columns.str.lower()
+        req_cols = {"symbol", "name", "exchange", "asset_class"}
+        missing_cols = req_cols.difference(symbols.columns)
+        if len(missing_cols) != 0:
+            log.error(
+                "Cannot insert symbols. Dataframe missing Columns: %s", missing_cols
+            )
+            return Series(), Series()
+
+        # Convert to a format that can be inserted into the database
+        symbols_fmt = symbols[[*req_cols]].copy()
+
+        # Turn all extra Columns into an attributes json obj.
+        symbols_fmt.loc[:, "attrs"] = symbols[
+            [*set(symbols.columns).difference(req_cols)]
+        ].apply(lambda x: x.to_json(), axis="columns")
+
+        insert_args = {}
+        for k, v in symbols_fmt.to_dict(orient="series").items():
+            insert_args[str(k)] = v.to_list()
+
+        # Insert Args a Dictionary of numpy arrays and a contant source.
+        # This dictionary is passed as arguments to Postgres that are then unnested.
+        insert_args["source"] = source
+        response = DataFrame()
+
+        with self._cursor() as cursor:
+            self._ensure_symbols_table_exists(cursor)
+
+            _op = Op.UPSERT if on_conflict == "update" else Op.INSERT
+            cursor.execute(self[_op, AssetTbls.SYMBOLS](), insert_args)
+            response = DataFrame(cursor.fetchall())
+
+        if len(response) == 0:
+            return Series(), Series()
+
+        if _op == Op.INSERT:
+            # All Returned symbols in response were inserted, none updated.
+            return response[0], Series()
+        else:
+            # Second Column is xmax, on insertion this is 0, on update its != 0
+            inserted = response[1] == "0"
+            return response.loc[inserted, 0], response.loc[~inserted, 0]
+
+    # endregion
+
     # region ---- ---- ---- Private Security Sub-routines ---- ---- ----
 
-    def _configure_security_tables(self, cursor: TupleCursor):
+    def _ensure_symbols_table_exists(self, cursor: TupleCursor):
         cursor.execute(self[Op.SELECT, Generic.TABLE](Schema.SECURITY))
         tables: set[str] = {rsp[0] for rsp in cursor.fetchall()}
 

@@ -40,7 +40,7 @@ def where() -> sql.Composable:
     return sql.SQL(" WHERE ")
 
 
-Comparators = Literal["=", "!=", ">", "<", ">=", "<="]
+Comparators = Literal["=", "!=", ">", "<", ">=", "<=", "LIKE"]
 
 
 def union_filter(
@@ -48,7 +48,7 @@ def union_filter(
 ) -> sql.Composable:
     """
     Simple Union ('AND') Filter. Filters, when a dictionary, is of the format:
-    {table_column_name:str, Comparator:Literal['=', '!=', '>', '<', '>=', '<=']}
+    {table_column_name:str, Comparator:Literal['=', '!=', '>', '<', '>=', '<=', "LIKE"]}
     """
     if len(filters) == 0:
         return sql.SQL("")
@@ -75,9 +75,7 @@ def intersection_filter(
     return sql.SQL(" OR ").join(filters)
 
 
-def _filter(
-    arg: str, comparison: Literal["=", "!=", ">", "<", ">=", "<="]
-) -> sql.Composable:
+def _filter(arg: str, comparison: Comparators) -> sql.Composable:
     return sql.SQL("{arg} " + comparison + " {arg_ph}").format(
         arg=sql.Identifier(arg),
         arg_ph=sql.Placeholder(arg),
@@ -165,7 +163,7 @@ def create_symbol_table() -> sql.Composed:
             name TEXT NOT NULL,
             stored BOOLEAN NOT NULL DEFAULT False,
             attrs jsonb,
-            UNIQUE (symbol, source, exchange)
+            CONSTRAINT unique_asset UNIQUE (symbol, source, exchange)
         );
     """
     ).format(
@@ -175,34 +173,38 @@ def create_symbol_table() -> sql.Composed:
 
 
 def select_symbols(
-    rtn_args: list[str], composed_filter: sql.Composable
+    filters: dict[str, Comparators], include_attrs: bool = False
 ) -> sql.Composed:
+    rtn_args = {"symbol", "exchange", "name", "asset_class", "pkey", "stored", "source"}
+    if include_attrs:
+        rtn_args |= {"attrs"}
+
     return sql.SQL(
         """
-        SELECT {rtn_args} FROM {schema_name}.{table_name}
+        SELECT symbol FROM {schema_name}.{table_name}
         {filter};
     """
     ).format(
         schema_name=sql.Identifier(Schema.SECURITY),
         table_name=sql.Identifier(AssetTbls.SYMBOLS),
         rtn_args=sql.SQL(",").join([sql.Identifier(arg) for arg in rtn_args]),
-        filter=composed_filter,
+        filter=union_filter(filters),
     )
 
 
 def insert_symbols() -> sql.Composed:
     return sql.SQL(
         """
-        INSERT INTO {schema_name}.{table_name} (symbol, name, source, exchange, asset_class, attrs) 
-        SELECT A, B, C, D, E, F FROM unnest(
+        INSERT INTO {schema_name}.{table_name} (source, symbol, name, exchange, asset_class, attrs) 
+        SELECT %(source)s, A, B, C, D, E FROM unnest(
             %(symbol)s::text[],
             %(name)s::text[],
-            %(source)s::text[],
             %(exchange)s::text[],
             %(asset_class)s::text[],
             %(attrs)s::jsonb[]
-        ) AS t(A, B, C, D, E, F)
-        RETURNING pkey;
+        ) AS t(A, B, C, D, E)
+        ON CONFLICT (symbol, source, exchange) DO NOTHING
+        RETURNING symbol;
     """
     ).format(
         schema_name=sql.Identifier(Schema.SECURITY),
@@ -210,17 +212,26 @@ def insert_symbols() -> sql.Composed:
     )
 
 
-def update_symbol(args: list[str]) -> sql.Composed:
+def upsert_symbols() -> sql.Composed:
     return sql.SQL(
         """
-        UPDATE {schema_name}.{table_name} SET
-            {update_args}
-        WHERE pkey = %(pkey)s;
+        INSERT INTO {schema_name}.{table_name} (source, symbol, name, exchange, asset_class, attrs) 
+        SELECT %(source)s, A, B, C, D, E FROM unnest(
+            %(symbol)s::text[],
+            %(name)s::text[],
+            %(exchange)s::text[],
+            %(asset_class)s::text[],
+            %(attrs)s::jsonb[]
+        ) AS t(A, B, C, D, E)
+        ON CONFLICT (symbol, source, exchange) DO UPDATE
+        SET name = EXCLUDED.name, 
+            asset_class = EXCLUDED.asset_class,
+            attrs = EXCLUDED.attrs
+        RETURNING symbol, xmax;
     """
     ).format(
         schema_name=sql.Identifier(Schema.SECURITY),
         table_name=sql.Identifier(AssetTbls.SYMBOLS),
-        update_args=sql.SQL(", ").join([_filter(arg, "=") for arg in args]),
     )
 
 
@@ -781,7 +792,7 @@ OPERATION_MAP: OperationMap = {
         # AssetTbls.DIVIDENDS: ,
         SeriesTbls._ORIGIN: insert_origin,
     },
-    Operation.UPSERT: {},
+    Operation.UPSERT: {AssetTbls.SYMBOLS: upsert_symbols},
     Operation.UPDATE: {
         SeriesTbls._ORIGIN: update_origin,
     },
