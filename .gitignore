@@ -6,6 +6,9 @@
 *.exe
 *.o
 *.so
+*.cpython-311.pyc
+*.cpython-312.pyc
+*.cpython-313.pyc
 __pycache__
 
 # Packages #

@@ -192,7 +192,7 @@ def select_symbols(
     )
 
 
-def create_temp_symbol_table() -> sql.Composed:
+def create_symbol_buffer() -> sql.Composed:
     "Temp table in injest symbols from. The Source arg is not present since it is assumed constant."
     return sql.SQL(
         """
@@ -201,8 +201,7 @@ def create_temp_symbol_table() -> sql.Composed:
             exchange TEXT NOT NULL,
             asset_class TEXT NOT NULL,
             name TEXT NOT NULL,
-            attrs jsonb,
-            CONSTRAINT unique_asset UNIQUE (symbol, exchange)
+            attrs jsonb
         );
     """
     ).format(
@@ -223,10 +222,10 @@ def insert_copied_symbols(source: str):
         """
         INSERT INTO {schema_name}.{table_name} (source, symbol, name, exchange, asset_class, attrs) 
         SELECT {source}, symbol, name, exchange, asset_class, attrs FROM _symbol_buffer
-        
+        ON CONFLICT (symbol, source, exchange) DO NOTHING
         RETURNING symbol;
         DROP TABLE _symbol_buffer;
-    """  # ON CONFLICT (symbol, source, exchange) DO NOTHING
+    """
     ).format(
         schema_name=sql.Identifier(Schema.SECURITY),
         table_name=sql.Identifier(AssetTbls.SYMBOLS),
@@ -250,84 +249,6 @@ def upsert_copied_symbols(source: str):
         schema_name=sql.Identifier(Schema.SECURITY),
         table_name=sql.Identifier(AssetTbls.SYMBOLS),
         source=sql.Literal(source),
-    )
-
-
-def insert_many_symbols(args: list[str]) -> sql.Composed:
-    return sql.SQL(
-        """
-        INSERT INTO {schema_name}.{table_name} ({args}) 
-        VALUES ({placeholders})
-        
-        RETURNING symbol;
-    """  # ON CONFLICT (symbol, source, exchange) DO NOTHING;
-    ).format(
-        schema_name=sql.Identifier(Schema.SECURITY),
-        table_name=sql.Identifier(AssetTbls.SYMBOLS),
-        args=sql.SQL(",").join([sql.SQL(arg) for arg in args]),
-        placeholders=sql.SQL(",").join([sql.SQL("%s") for _ in range(len(args))]),
-    )
-
-
-def upsert_many_symbols(args: list[str]) -> sql.Composed:
-    return sql.SQL(
-        """
-        INSERT INTO {schema_name}.{table_name} ({args}) 
-        VALUES ({placeholders})
-        ON CONFLICT (symbol, source, exchange) DO UPDATE
-        SET name = EXCLUDED.name, 
-            asset_class = EXCLUDED.asset_class,
-            attrs = EXCLUDED.attrs
-        RETURNING symbol, xmax;
-    """
-    ).format(
-        schema_name=sql.Identifier(Schema.SECURITY),
-        table_name=sql.Identifier(AssetTbls.SYMBOLS),
-        args=sql.SQL(",").join([sql.SQL(arg) for arg in args]),
-        placeholders=sql.SQL(",").join([sql.SQL("%s") for _ in range(len(args))]),
-    )
-
-
-def insert_symbols() -> sql.Composed:
-    return sql.SQL(
-        """
-        INSERT INTO {schema_name}.{table_name} (source, symbol, name, exchange, asset_class, attrs) 
-        SELECT %(source)s, A, B, C, D, E FROM unnest(
-            %(symbol)s::text[],
-            %(name)s::text[],
-            %(exchange)s::text[],
-            %(asset_class)s::text[],
-            %(attrs)s::jsonb[]
-        ) AS t(A, B, C, D, E)
-        RETURNING symbol;
-    """
-        # ON CONFLICT (symbol, source, exchange) DO NOTHING
-    ).format(
-        schema_name=sql.Identifier(Schema.SECURITY),
-        table_name=sql.Identifier(AssetTbls.SYMBOLS),
-    )
-
-
-def upsert_symbols() -> sql.Composed:
-    return sql.SQL(
-        """
-        INSERT INTO {schema_name}.{table_name} (source, symbol, name, exchange, asset_class, attrs) 
-        SELECT %(source)s, A, B, C, D, E FROM unnest(
-            %(symbol)s::text[],
-            %(name)s::text[],
-            %(exchange)s::text[],
-            %(asset_class)s::text[],
-            %(attrs)s::jsonb[]
-        ) AS t(A, B, C, D, E)
-        ON CONFLICT (symbol, source, exchange) DO UPDATE
-        SET name = EXCLUDED.name, 
-            asset_class = EXCLUDED.asset_class,
-            attrs = EXCLUDED.attrs
-        RETURNING symbol, xmax;
-    """
-    ).format(
-        schema_name=sql.Identifier(Schema.SECURITY),
-        table_name=sql.Identifier(AssetTbls.SYMBOLS),
     )
 
 
@@ -812,7 +733,6 @@ class AssetTbls(StrEnum):
 
     SYMBOLS = auto()
     SYMBOLS_BUFFER = auto()
-    SYMBOLS_MANY = auto()
     # SPLITS = auto() # Currently not Implemented. All Data is assumed to be Adjusted.
     # DIVIDENDS = auto()
     # EARNINGS = auto()
@@ -880,24 +800,20 @@ OPERATION_MAP: OperationMap = {
         SeriesTbls.RAW_AGGREGATE: create_raw_aggregate_table,
         SeriesTbls.TICK_AGGREGATE: create_continuous_tick_aggregate,
         AssetTbls.SYMBOLS: create_symbol_table,
-        AssetTbls.SYMBOLS_BUFFER: create_temp_symbol_table,
+        AssetTbls.SYMBOLS_BUFFER: create_symbol_buffer,
         # AssetTbls.SPLITS: ,
         # AssetTbls.EARNINGS: ,
         # AssetTbls.DIVIDENDS: ,
     },
     Operation.INSERT: {
-        AssetTbls.SYMBOLS: insert_symbols,
         AssetTbls.SYMBOLS_BUFFER: insert_copied_symbols,
-        AssetTbls.SYMBOLS_MANY: insert_many_symbols,
         # AssetTbls.SPLITS: ,
         # AssetTbls.EARNINGS: ,
         # AssetTbls.DIVIDENDS: ,
         SeriesTbls._ORIGIN: insert_origin,
     },
     Operation.UPSERT: {
-        AssetTbls.SYMBOLS: upsert_symbols,
         AssetTbls.SYMBOLS_BUFFER: upsert_copied_symbols,
-        AssetTbls.SYMBOLS_MANY: upsert_many_symbols,
     },
     Operation.UPDATE: {
         SeriesTbls._ORIGIN: update_origin,

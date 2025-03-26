@@ -158,6 +158,16 @@ class TimeScaleDB:
     def _cursor(
         self, dict_cursor: bool = False, *, pipeline: bool = False
     ) -> Iterator[TupleCursor] | Iterator[DictCursor]:
+        """
+        Returns a cursor to execute commands in a database.
+
+        Default return product is a list of tuples. Returns can be made into lists of dictionaries
+        by settign dict_cursor=True. This is less performant for large datasets though.
+
+        Pipeline is a feature of a cursor, that when set to True, avoids waiting for responses
+        before executing new commands. In theory that should increase performance. In practice
+        it seemed to only reduce performance.
+        """
         cursor_factory = pg_rows.dict_row if dict_cursor else pg_rows.tuple_row
         conn: pg.Connection = self.pool.getconn()
         try:
@@ -168,7 +178,7 @@ class TimeScaleDB:
                 with conn, conn.cursor(row_factory=cursor_factory) as cursor:
                     yield cursor  # type:ignore : Silence the Dict/Tuple overloading Error
         except pg.DatabaseError as e:
-            conn.rollback()  # Reset Database for future cmds InFailedSqlTransaction Err thrown otherwise
+            conn.rollback()  # Reset Database, InFailedSqlTransaction Err thrown if not reset
             log.error("Caught Database Error: \n '%s' \n...Rolling back changes.", e)
         finally:
             conn.commit()
