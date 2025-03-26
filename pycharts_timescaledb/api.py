@@ -140,24 +140,33 @@ class TimeScaleDB:
 
     @overload
     @contextmanager
-    def _cursor(self, dict_cursor: Literal[True]) -> Iterator[DictCursor]: ...
+    def _cursor(
+        self, dict_cursor: Literal[True], *, pipeline: bool = False
+    ) -> Iterator[DictCursor]: ...
     @overload
     @contextmanager
-    def _cursor(self, dict_cursor: Literal[False] = False) -> Iterator[TupleCursor]: ...
+    def _cursor(
+        self, dict_cursor: Literal[False] = False, *, pipeline: bool = False
+    ) -> Iterator[TupleCursor]: ...
     @overload
     @contextmanager
-    def _cursor(self, dict_cursor: bool = False) -> Iterator[TupleCursor]: ...
+    def _cursor(
+        self, dict_cursor: bool = False, *, pipeline: bool = False
+    ) -> Iterator[TupleCursor]: ...
 
     @contextmanager
     def _cursor(
-        self, dict_cursor: bool = False
+        self, dict_cursor: bool = False, *, pipeline: bool = False
     ) -> Iterator[TupleCursor] | Iterator[DictCursor]:
         cursor_factory = pg_rows.dict_row if dict_cursor else pg_rows.tuple_row
-
         conn: pg.Connection = self.pool.getconn()
         try:
-            with conn, conn.cursor(row_factory=cursor_factory) as cursor:
-                yield cursor  # type:ignore : Silence the Dict/Tuple overloading Error
+            if pipeline:
+                with conn.pipeline(), conn.cursor(row_factory=cursor_factory) as cursor:
+                    yield cursor  # type:ignore : Silence the Dict/Tuple overloading Error
+            else:
+                with conn, conn.cursor(row_factory=cursor_factory) as cursor:
+                    yield cursor  # type:ignore : Silence the Dict/Tuple overloading Error
         except pg.DatabaseError as e:
             conn.rollback()  # Reset Database for future cmds InFailedSqlTransaction Err thrown otherwise
             log.error("Caught Database Error: \n '%s' \n...Rolling back changes.", e)
