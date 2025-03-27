@@ -564,6 +564,98 @@ def _error_check_continuous_aggrigate(table: AssetTable, ref_table: AssetTable):
         )
 
 
+def refresh_continous_aggrigate(
+    schema: str, table: AssetTable, start: Optional[Timestamp], end: Optional[Timestamp]
+) -> sql.Composed:
+    if table.raw:
+        raise AttributeError(
+            f"Cannot Refresh Table {schema}.{table}. It is not a Continuous Aggregate."
+        )
+    return sql.SQL(
+        "CALL refresh_continuous_aggregate({full_name}, {start}, {end});"
+    ).format(
+        full_name=sql.Literal(schema + "." + repr(table)),
+        start=sql.Literal(start),  # Automatically handles type conversion & Null Case
+        end=sql.Literal(end),
+    )
+
+
+def create_raw_tick_buffer(table: AssetTable) -> sql.Composed:
+    return sql.SQL(
+        """
+        CREATE TEMP TABLE _tick_buffer (
+            dt TIMESTAMPTZ NOT NULL,"""
+        + (" rth BOOLEAN not NULL," if table.ext and table.rth is None else "")
+        + """
+            price DOUBLE PRECISION NOT NULL,
+            volume DOUBLE PRECISION,
+        ) ON COMMIT DROP;
+    """
+    ).format()
+
+
+def copy_ticks(args: list[str]) -> sql.Composed:
+    return sql.SQL("COPY _tick_buffer ({args}) FROM STDIN;").format(
+        args=sql.SQL(",").join([sql.Identifier(arg) for arg in args]),
+    )
+
+
+def insert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Composed:
+    "No Conflict Statement since Inserted Data Ideally should be only new data."
+    if table.ext and table.rth is None:
+        return sql.SQL(
+            """
+            INSERT INTO {schema_name}.{table_name} (pkey, dt, rth, price, volume) 
+            SELECT {pkey}, dt, rth, price, volume FROM _tick_buffer;
+        """
+        ).format(
+            schema_name=sql.Identifier(schema),
+            table_name=sql.Identifier(str(table)),
+            source=sql.Literal(pkey),
+        )
+    else:
+        return sql.SQL(
+            """
+            INSERT INTO {schema_name}.{table_name} (pkey, dt, price, volume) 
+            SELECT {pkey}, dt, price, volume FROM _tick_buffer;
+        """
+        ).format(
+            schema_name=sql.Identifier(schema),
+            table_name=sql.Identifier(str(table)),
+            source=sql.Literal(pkey),
+        )
+
+
+def upsert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Composed:
+    "Not Intended to be used as often as INSERT Operation since this requires a CONTINUOUS AGG REFRESH"
+    if table.ext and table.rth is None:
+        return sql.SQL(
+            """
+            INSERT INTO {schema_name}.{table_name} (pkey, dt, rth, price, volume) 
+            SELECT {pkey}, dt, rth, price, volume FROM _tick_buffer
+            ON CONFLICT (pkey, dt) DO UPDATE
+            SET price = EXCLUDED.price, volume = EXCLUDED.volume, rth = EXCLUDED.rth;
+        """
+        ).format(
+            schema_name=sql.Identifier(schema),
+            table_name=sql.Identifier(str(table)),
+            source=sql.Literal(pkey),
+        )
+    else:
+        return sql.SQL(
+            """
+            INSERT INTO {schema_name}.{table_name} (pkey, dt, price, volume) 
+            SELECT {pkey}, dt, price, volume FROM _tick_buffer
+            ON CONFLICT (pkey, dt) DO UPDATE
+            SET price = EXCLUDED.price, volume = EXCLUDED.volume;
+        """
+        ).format(
+            schema_name=sql.Identifier(schema),
+            table_name=sql.Identifier(str(table)),
+            source=sql.Literal(pkey),
+        )
+
+
 # endregion
 
 
@@ -643,47 +735,97 @@ def create_continuous_aggrigate(
     )
 
 
-def insert_aggrigate_series(schema: str, table: str) -> sql.Composed:
+def create_raw_agg_buffer(table: AssetTable) -> sql.Composed:
     return sql.SQL(
         """
-        INSERT INTO {schema_name}.{table_name} (
-            {insert_args}
-        ) 
-        VALUES (
-            {kw_args}
-        );
+        CREATE TEMP TABLE _aggregate_buffer (
+            dt TIMESTAMPTZ NOT NULL,"""
+        + (" rth BOOLEAN NOT NULL," if table.ext and table.rth is None else "")
+        + """
+            close DOUBLE PRECISION NOT NULL,
+            open DOUBLE PRECISION NOT NULL,
+            high DOUBLE PRECISION NOT NULL,
+            low DOUBLE PRECISION NOT NULL,
+            volume DOUBLE PRECISION,
+            vwap DOUBLE PRECISION,
+            ticks INTEGER,
+        ) ON COMMIT DROP;
     """
-    ).format(schema_name=sql.Identifier(schema), table_name=sql.Identifier(table))
+    ).format()
 
 
-def upsert_aggrigate_series(schema: str, table: str):
-    return sql.SQL(
-        """
-        INSERT INTO {schema_name}.{table_name} (
-            {insert_args}
-        ) 
-        VALUES (
-            {kw_args}
-        ) ON CONFLICT UPDATE;
-    """
-    ).format(schema_name=sql.Identifier(schema), table_name=sql.Identifier(table))
-
-
-def update_aggrigate(
-    schema: str, table: str, sql_filter: sql.Composable, args: list[str]
-) -> sql.Composed:
-    return sql.SQL(
-        """
-        UPDATE {schema_name}.{table_name} SET (
-            {update_args}
-        ){filter};
-    """
-    ).format(
-        schema_name=sql.Identifier(schema),
-        table_name=sql.Identifier(table),
-        update_args=sql.SQL(", ").join([_filter(arg, "=") for arg in args]),
-        filter=sql_filter,
+def copy_aggregates(args: list[str]) -> sql.Composed:
+    return sql.SQL("COPY _aggregate_buffer ({args}) FROM STDIN;").format(
+        args=sql.SQL(",").join([sql.Identifier(arg) for arg in args]),
     )
+
+
+def insert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.Composed:
+    if table.ext and table.rth is None:
+        return sql.SQL(
+            """
+            INSERT INTO {schema_name}.{table_name} (pkey, dt, rth, close, open, high, low, volume, vwap, ticks) 
+            SELECT {pkey}, dt, rth, close, open, high, low, volume, vwap, ticks FROM _aggregate_buffer;
+        """
+        ).format(
+            schema_name=sql.Identifier(schema),
+            table_name=sql.Identifier(str(table)),
+            source=sql.Literal(pkey),
+        )
+    else:
+        return sql.SQL(
+            """
+            INSERT INTO {schema_name}.{table_name} (pkey, dt, close, open, high, low, volume, vwap, ticks) 
+            SELECT {pkey}, dt, close, open, high, low, volume, vwap, ticks FROM _aggregate_buffer;
+        """
+        ).format(
+            schema_name=sql.Identifier(schema),
+            table_name=sql.Identifier(str(table)),
+            source=sql.Literal(pkey),
+        )
+
+
+def upsert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.Composed:
+    "Not Intended to be used as often as INSERT Operation since this requires a CONTINUOUS AGG REFRESH"
+    if table.ext and table.rth is None:
+        return sql.SQL(
+            """
+            INSERT INTO {schema_name}.{table_name} (pkey, dt, rth, close, open, high, low, volume, vwap, ticks) 
+            SELECT {pkey}, dt, rth, close, open, high, low, volume, vwap, ticks FROM _aggregate_buffer
+            ON CONFLICT (pkey, dt) DO UPDATE
+            SET rth = EXCLUDED.rth,
+                close = EXCLUDED.close,
+                open = EXCLUDED.open, 
+                high = EXCLUDED.high, 
+                low = EXCLUDED.low, 
+                volume = EXCLUDED.volume, 
+                vwap = EXCLUDED.vwap, 
+                ticks = EXCLUDED.ticks;
+        """
+        ).format(
+            schema_name=sql.Identifier(schema),
+            table_name=sql.Identifier(str(table)),
+            source=sql.Literal(pkey),
+        )
+    else:
+        return sql.SQL(
+            """
+            INSERT INTO {schema_name}.{table_name} (pkey, dt, close, open, high, low, volume, vwap, ticks) 
+            SELECT {pkey}, dt, close, open, high, low, volume, vwap, ticks FROM _aggregate_buffer
+            ON CONFLICT (pkey, dt) DO UPDATE
+            SET close = EXCLUDED.close,
+                open = EXCLUDED.open, 
+                high = EXCLUDED.high, 
+                low = EXCLUDED.low, 
+                volume = EXCLUDED.volume, 
+                vwap = EXCLUDED.vwap, 
+                ticks = EXCLUDED.ticks;
+        """
+        ).format(
+            schema_name=sql.Identifier(schema),
+            table_name=sql.Identifier(str(table)),
+            source=sql.Literal(pkey),
+        )
 
 
 # endregion
@@ -792,10 +934,11 @@ OPERATION_MAP: OperationMap = {
         SeriesTbls._METADATA: create_timeseries_metadata_view,
         SeriesTbls._METADATA_FUNC: create_timeseries_metadata_subfunction,
         SeriesTbls.TICK: create_tick_table,
-        SeriesTbls.MINUTE: create_raw_aggregate_table,
-        SeriesTbls.AGGREGATE: create_continuous_aggrigate,
+        SeriesTbls.TICK_BUFFER: create_raw_tick_buffer,
+        SeriesTbls.CONTINUOUS_AGG: create_continuous_aggrigate,
         SeriesTbls.RAW_AGGREGATE: create_raw_aggregate_table,
-        SeriesTbls.TICK_AGGREGATE: create_continuous_tick_aggregate,
+        SeriesTbls.RAW_AGG_BUFFER: create_raw_agg_buffer,
+        SeriesTbls.CONTINOUS_TICK_AGG: create_continuous_tick_aggregate,
         AssetTbls.SYMBOLS: create_symbol_table,
         AssetTbls.SYMBOLS_BUFFER: create_symbol_buffer,
         # AssetTbls.SPLITS: ,
@@ -803,6 +946,8 @@ OPERATION_MAP: OperationMap = {
         # AssetTbls.DIVIDENDS: ,
     },
     Operation.INSERT: {
+        SeriesTbls.TICK_BUFFER: insert_copied_ticks,
+        SeriesTbls.RAW_AGG_BUFFER: insert_copied_aggregates,
         AssetTbls.SYMBOLS_BUFFER: insert_copied_symbols,
         # AssetTbls.SPLITS: ,
         # AssetTbls.EARNINGS: ,
@@ -810,12 +955,18 @@ OPERATION_MAP: OperationMap = {
         SeriesTbls._ORIGIN: insert_origin,
     },
     Operation.UPSERT: {
+        SeriesTbls.TICK_BUFFER: upsert_copied_ticks,
+        SeriesTbls.RAW_AGG_BUFFER: upsert_copied_aggregates,
         AssetTbls.SYMBOLS_BUFFER: upsert_copied_symbols,
     },
     Operation.UPDATE: {
         SeriesTbls._ORIGIN: update_origin,
     },
-    Operation.COPY: {AssetTbls.SYMBOLS_BUFFER: copy_symbols},
+    Operation.COPY: {
+        SeriesTbls.TICK_BUFFER: copy_ticks,
+        SeriesTbls.RAW_AGG_BUFFER: copy_aggregates,
+        AssetTbls.SYMBOLS_BUFFER: copy_symbols,
+    },
     Operation.SELECT: {
         Generic.TABLE: list_tables,
         Generic.SCHEMA: list_schemas,
@@ -833,7 +984,10 @@ OPERATION_MAP: OperationMap = {
         Generic.TABLE: drop_table,
         Generic.VIEW: drop_materialized_view,
     },
-    Operation.REFRESH: {SeriesTbls._METADATA: refresh_timeseries_metadata_view},
+    Operation.REFRESH: {
+        SeriesTbls._METADATA: refresh_timeseries_metadata_view,
+        SeriesTbls.CONTINUOUS_AGG: refresh_timeseries_metadata_view,
+    },
 }
 
 
