@@ -40,6 +40,7 @@ log = logging.getLogger("pycharts-timescaledb")
 DEFAULT_YML_PATH = Path(__file__).parent.joinpath("timescale.yml").as_posix()
 TIMESCALE_IMAGE = "timescale/timescaledb-ha:pg17"
 POOL_GEN_TIMEOUT = 5  # seconds to wait for the connection pool to be generated
+LOCAL_POOL_GEN_TIMEOUT = 0.2  # wait time when starting a local Connection Pool
 # endregion
 # pylint: disable='protected-access'
 
@@ -90,22 +91,28 @@ class TimeScaleDB:
             k: self.config[k] for k in ("user", "password", "dbname", "host", "port")
         }
 
-        if self.config["host"] in {"localhost", "127.0.0.1"}:
-            self._init_and_start_localdb(docker_compose_fpath)
-
-        # Generate a Connection Pool
-        self.pool = ConnectionPool(kwargs=self.conn_params, open=False)
+        _local = self.config["host"] in {"localhost", "127.0.0.1"}
+        _timeout = LOCAL_POOL_GEN_TIMEOUT if _local else POOL_GEN_TIMEOUT
 
         try:
-            self.pool.open(timeout=POOL_GEN_TIMEOUT)
+            self.pool = ConnectionPool(
+                kwargs=self.conn_params, open=False, timeout=_timeout
+            )
+            self.pool.open(timeout=_timeout)
             log.debug("Health_check: %s", "good" if self._health_check() else "bad")
         except PoolTimeout as e:
-            raise e  # TODO: Give some more informative info here?
-        except OperationalError as e:
-            raise e  # TODO: Give some more informative info here?
+            if not _local:
+                raise e  # Give some more informative info here?
 
-        # Generate a Bound PSQL Operation Map, Supply args to expand commands in the future?
-        self.cmds = Commands()  # Commands(operation_map, schema_map)
+            # Try and start the local database, give extra buffer on the timeout.
+            self._init_and_start_localdb(docker_compose_fpath)
+            with self.pool.connection(timeout=2.5) as conn:
+                conn._check_connection_ok()
+
+        except OperationalError as e:
+            raise e  # Give some more informative info here?
+
+        self.cmds = Commands()
         self._read_db_timeseries_config()
 
     def __del__(self):
@@ -128,7 +135,7 @@ class TimeScaleDB:
         "Accessor forwarder for the self.cmds object"
         return self.cmds[args]
 
-    # region ----------- Private Connection & Cursor Methods -----------
+    # region ----------- Connection & Cursor Methods -----------
 
     def _health_check(self) -> bool:
         "Simple Ping to the Database to ensure it is alive"
@@ -185,30 +192,46 @@ class TimeScaleDB:
             self.pool.putconn(conn)
 
     @overload
-    def _execute_catch(
+    def execute(
         self,
-        cmd: sql.Composed,
-        args: Optional[Mapping[str, int | float | str | None]] = None,
+        operation: Op,
+        table: StrEnum,
+        fmt_args: Mapping[str, Any] = {},
+        exec_args: Optional[Mapping[str, int | float | str | None]] = None,
         dict_cursor: bool = False,
     ) -> Tuple[List[Tuple], str]: ...
     @overload
-    def _execute_catch(
+    def execute(
         self,
-        cmd: sql.Composed,
-        args: Optional[Mapping[str, int | float | str | None]] = None,
+        operation: Op,
+        table: StrEnum,
+        fmt_args: Mapping[str, Any] = {},
+        exec_args: Optional[Mapping[str, int | float | str | None]] = None,
         dict_cursor: bool = True,
     ) -> Tuple[List[Dict], str]: ...
 
-    def _execute_catch(
+    def execute(
         self,
-        cmd: sql.Composed,
-        args: Optional[Mapping[str, int | float | str | None]] = None,
+        operation: Op,
+        table: StrEnum,
+        fmt_args: Mapping[str, Any] = {},
+        exec_args: Optional[Mapping[str, int | float | str | None]] = None,
         dict_cursor: bool = False,
     ) -> Tuple[List[Dict] | List[Tuple], str]:
+        "Execution Method to manually invoke a command within the database."
+
+        if operation not in self.cmds.operation_map:
+            log.error("Unknown Operation: %s", operation)
+            return [], "CMD_ERROR"
+        if table not in self.cmds.operation_map[operation]:
+            log.error("Unknown Operation Table Pair: %s:%s", operation, table)
+            return [], "CMD_ERROR"
+
+        cmd = self[operation, table](**fmt_args)
         with self._cursor(dict_cursor) as cursor:
             try:
                 log.debug("Executing PSQL Command: %s", cmd.as_string(cursor))
-                cursor.execute(cmd, args)
+                cursor.execute(cmd, exec_args)
 
             except pg.DatabaseError as e:
                 log.error(
@@ -219,14 +242,7 @@ class TimeScaleDB:
                 )
                 return [], str(cursor.statusmessage)
 
-            response = []
-            try:
-                response = cursor.fetchall()
-            except pg.ProgrammingError as e:
-                # raise any errors other than "no data returned"
-                if str(e) != "the last operation didn't produce a result":
-                    raise e
-
+            response = cursor.fetchall() if cursor.pgresult else []
             return response, str(cursor.statusmessage)
 
     # endregion

@@ -32,7 +32,7 @@ class TimescaleDB_EXT(TimeScaleDB):
 
     # region ---- ---- ---- Public Dunder Sub-routines ---- ---- ----
 
-    def __configure_db_format__(
+    def configure_timeseries_schema(
         self,
         tick_tables: Optional[TimeseriesConfig] = None,
         minute_tables: Optional[TimeseriesConfig] = None,
@@ -271,9 +271,9 @@ class TimescaleDB_EXT(TimeScaleDB):
                 log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
                 ref_table = config.get_aggregation_source(tbl)
                 tbl_type = (
-                    SeriesTbls.TICK_AGGREGATE
+                    SeriesTbls.CONTINOUS_TICK_AGG
                     if ref_table.period == Timedelta(0)
-                    else SeriesTbls.AGGREGATE
+                    else SeriesTbls.CONTINUOUS_AGG
                 )
                 cursor.execute(cmd := self[Op.CREATE, tbl_type](schema, tbl, ref_table))
                 log.debug("CMD: %s", cmd.as_string())
@@ -370,9 +370,9 @@ class TimescaleDB_EXT(TimeScaleDB):
                 log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
                 ref_table = config.get_aggregation_source(tbl)
                 tbl_type = (
-                    SeriesTbls.TICK_AGGREGATE
+                    SeriesTbls.CONTINOUS_TICK_AGG
                     if ref_table.period == Timedelta(0)
-                    else SeriesTbls.AGGREGATE
+                    else SeriesTbls.CONTINUOUS_AGG
                 )
                 cursor.execute(cmd := self[Op.CREATE, tbl_type](schema, tbl, ref_table))
                 log.debug("CMD: %s", cmd.as_string())

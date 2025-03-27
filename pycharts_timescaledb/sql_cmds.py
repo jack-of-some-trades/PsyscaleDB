@@ -202,7 +202,7 @@ def create_symbol_buffer() -> sql.Composed:
             asset_class TEXT NOT NULL,
             name TEXT NOT NULL,
             attrs jsonb
-        );
+        ) ON COMMIT DROP;
     """
     ).format(
         schema_name=sql.Identifier(Schema.SECURITY),
@@ -213,18 +213,16 @@ def create_symbol_buffer() -> sql.Composed:
 def copy_symbols(args: list[str]) -> sql.Composed:
     return sql.SQL("COPY _symbol_buffer ({args}) FROM STDIN;").format(
         args=sql.SQL(",").join([sql.Identifier(arg) for arg in args]),
-        table_name=sql.Identifier(AssetTbls.SYMBOLS),
     )
 
 
-def insert_copied_symbols(source: str):
+def insert_copied_symbols(source: str) -> sql.Composed:
     return sql.SQL(
         """
         INSERT INTO {schema_name}.{table_name} (source, symbol, name, exchange, asset_class, attrs) 
         SELECT {source}, symbol, name, exchange, asset_class, attrs FROM _symbol_buffer
         ON CONFLICT (symbol, source, exchange) DO NOTHING
         RETURNING symbol;
-        DROP TABLE _symbol_buffer;
     """
     ).format(
         schema_name=sql.Identifier(Schema.SECURITY),
@@ -233,7 +231,7 @@ def insert_copied_symbols(source: str):
     )
 
 
-def upsert_copied_symbols(source: str):
+def upsert_copied_symbols(source: str) -> sql.Composed:
     return sql.SQL(
         """
         INSERT INTO {schema_name}.{table_name} (source, symbol, name, exchange, asset_class, attrs) 
@@ -243,7 +241,6 @@ def upsert_copied_symbols(source: str):
             asset_class = EXCLUDED.asset_class,
             attrs = EXCLUDED.attrs
         RETURNING symbol, xmax;
-        DROP TABLE _symbol_buffer;
     """
     ).format(
         schema_name=sql.Identifier(Schema.SECURITY),
@@ -722,10 +719,11 @@ class SeriesTbls(StrEnum):
     _METADATA = auto()  # When reconstructing a Config from table names
     _METADATA_FUNC = auto()
     TICK = auto()
-    MINUTE = auto()
-    AGGREGATE = auto()
+    TICK_BUFFER = auto()
     RAW_AGGREGATE = auto()
-    TICK_AGGREGATE = auto()
+    RAW_AGG_BUFFER = auto()
+    CONTINUOUS_AGG = auto()
+    CONTINOUS_TICK_AGG = auto()
 
 
 class AssetTbls(StrEnum):
@@ -779,11 +777,10 @@ SCHEMA_MAP: SchemaMap = {
     # AssetTbls.DIVIDENDS: Schema.SECURITY,    # Not Implemented Yet
     SeriesTbls._ORIGIN: None,  # Table Applies to TICK, MINUTE and AGGREGATE
     SeriesTbls._METADATA: None,  # Table Applies to TICK, MINUTE and AGGREGATE
-    SeriesTbls.AGGREGATE: None,  # Table Applies to TICK, MINUTE and AGGREGATE
+    SeriesTbls.CONTINUOUS_AGG: None,  # Table Applies to TICK, MINUTE and AGGREGATE
     SeriesTbls.RAW_AGGREGATE: None,  # Table Applies to MINUTE and AGGREGATE
     SeriesTbls.TICK: Schema.TICK_DATA,
-    SeriesTbls.MINUTE: Schema.MINUTE_DATA,
-    SeriesTbls.TICK_AGGREGATE: Schema.TICK_DATA,
+    SeriesTbls.CONTINOUS_TICK_AGG: Schema.TICK_DATA,
     # ANY: SCHEMA.USER_DATA
 }
 
@@ -859,14 +856,17 @@ class Commands:
         self.schema_map = SCHEMA_MAP
         self.operation_map = OPERATION_MAP
 
-        # Merge in Additional Operations Given
         if operation_map is not None:
-            for operation, tbl_map in operation_map.items():
-                self.operation_map[operation] |= tbl_map
-
-        # Merge in additional Table:Schemas pairs
+            self.merge_operations(operation_map)
         if schema_map is not None:
-            self.schema_map |= schema_map
+            self.merge_schema_map(schema_map)
+
+    def merge_operations(self, operation_map: OperationMap):
+        for operation, tbl_map in operation_map.items():
+            self.operation_map[operation] |= tbl_map
+
+    def merge_schema_map(self, schema_map: SchemaMap):
+        self.schema_map |= schema_map
 
     @property
     def all_schemas(self) -> set[Schema]:

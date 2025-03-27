@@ -13,7 +13,7 @@ def main():
     dotenv.load_dotenv(dotenv.find_dotenv())
     db = TimescaleDB_EXT()
 
-    db.__configure_db_format__(
+    db.configure_timeseries_schema(
         minute_tables=STD_MINUTE_CONFIG,
         aggregate_tables=STD_AGGREGATE_CONFIG,
     )
