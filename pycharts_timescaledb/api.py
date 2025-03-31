@@ -26,9 +26,19 @@ from pandas import Timestamp
 import psycopg as pg
 import psycopg.rows as pg_rows
 from psycopg import OperationalError, sql
+from psycopg.pq._enums import ExecStatus
 from psycopg_pool import ConnectionPool, PoolTimeout
 
-from .sql_cmds import Generic, Operation as Op, Schema, SeriesTbls, Commands
+from .sql_cmds import (
+    STRICT_SYMBOL_ARGS,
+    SYMBOL_ARGS,
+    AssetTbls,
+    Generic,
+    Operation as Op,
+    Schema,
+    SeriesTbls,
+    Commands,
+)
 from .orm import TimeseriesConfig
 
 
@@ -198,7 +208,7 @@ class TimeScaleDB:
         table: StrEnum,
         fmt_args: Mapping[str, Any] = {},
         exec_args: Optional[Mapping[str, int | float | str | None]] = None,
-        dict_cursor: bool = False,
+        dict_cursor: Literal[False] = False,
     ) -> Tuple[List[Tuple], str]: ...
     @overload
     def execute(
@@ -207,7 +217,7 @@ class TimeScaleDB:
         table: StrEnum,
         fmt_args: Mapping[str, Any] = {},
         exec_args: Optional[Mapping[str, int | float | str | None]] = None,
-        dict_cursor: bool = True,
+        dict_cursor: Literal[True] = True,
     ) -> Tuple[List[Dict], str]: ...
 
     def execute(
@@ -242,7 +252,12 @@ class TimeScaleDB:
                 )
                 return [], str(cursor.statusmessage)
 
-            response = cursor.fetchall() if cursor.pgresult else []
+            response = []
+            pgr = cursor.pgresult
+            # Really sad I have to dig to check if there is data available.
+            if pgr is not None and pgr.status == ExecStatus.TUPLES_OK:
+                response = cursor.fetchall()
+
             return response, str(cursor.statusmessage)
 
     # endregion
@@ -321,7 +336,7 @@ class TimeScaleDB:
                     log.debug("Origin table not found in Schema: %s", schema)
 
                 # ---- Reconstruct Timeseries Config from existing table names ----
-                cursor.execute(self[Op.SELECT, Generic.TABLE](schema))
+                cursor.execute(self[Op.SELECT, Generic.SCHEMA_TABLES](schema))
                 tbl_names = [
                     rsp[0]
                     for rsp in cursor.fetchall()
@@ -350,3 +365,44 @@ class TimeScaleDB:
                 "TimescaleDBEXT__configure_db_format__() with the appropriate arguments.\n"
                 "See timescale_ext.py for necessary class extention and an Example Configuration."
             )
+
+    # endregion
+
+    # region ----------- Public Database Interaction Methods -----------
+
+    def search_symbols(
+        self,
+        filter_args: dict[str, Any],
+        return_attrs: bool = False,
+        attrs_search: bool = False,
+        limit: int = 100,
+    ) -> list[dict]:
+
+        if "pkey" in filter_args:
+            # Fast Track PKEY Searches since there will only ever be 1 symbol returned
+            filters = [("pkey", "=", filter_args["pkey"])]
+            name, symbol, attrs, limit = None, None, None, 1
+        else:
+            filters = [
+                (k, "=", v) for k, v in filter_args.items() if k in STRICT_SYMBOL_ARGS
+            ]
+
+            name = filter_args.get("name", None)
+            symbol = filter_args.get("symbol", None)
+
+            # Filter all extra given filter params into a separate dict
+            attrs = (
+                dict((k, v) for k, v in filter_args if k not in SYMBOL_ARGS)
+                if attrs_search
+                else None
+            )
+
+        with self._cursor(dict_cursor=True) as cursor:
+            cursor.execute(
+                self[Op.SELECT, AssetTbls.SYMBOLS](
+                    name, symbol, filters, return_attrs, attrs, limit
+                )
+            )
+            return cursor.fetchall()
+
+    # endregion

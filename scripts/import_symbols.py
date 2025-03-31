@@ -70,7 +70,7 @@ def _import_alpaca(db: TimescaleDB_EXT, api, on_conflict: Literal["ignore", "upd
 
     log.info("# Alpaca Symbols Inserted: %s", len(inserted))
     if len(inserted) > 0:
-        inserted_rows = filtered_assets.loc[filtered_assets["symbols"].isin(inserted)]
+        inserted_rows = filtered_assets.loc[filtered_assets["symbol"].isin(inserted)]
         log.info("Alpaca Symbols Inserted: \n%s", inserted_rows)
 
     log.info("# Alpaca Symbols Updated: %s", len(updated))

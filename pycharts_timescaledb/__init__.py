@@ -7,6 +7,7 @@ import logging
 from typing import Literal
 from .api import TimeScaleDB
 from .orm import AssetTable, TimeseriesConfig, DEFAULT_AGGREGATES
+from .sql_cmds import Operation, AssetTbls, SeriesTbls, UserTbls
 
 __all__ = (
     "TimeScaleDB",
@@ -14,6 +15,10 @@ __all__ = (
     "TimeseriesConfig",
     "DEFAULT_AGGREGATES",
     "set_timescale_db_log_level",
+    "Operation",
+    "AssetTbls",
+    "SeriesTbls",
+    "UserTbls",
 )
 
 

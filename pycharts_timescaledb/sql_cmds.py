@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 from enum import Enum, StrEnum, auto
+from functools import partial
+from json import dumps
 from typing import (
+    Any,
     Callable,
     Dict,
     Literal,
     Optional,
+    Sequence,
     Tuple,
     TypeAlias,
+    get_args,
 )
 
 from pandas import Timedelta, Timestamp
@@ -23,60 +28,98 @@ from .orm import AssetTable
 # region --------   -------- Filter Composer   --------  --------
 # Util functions to add 'WHERE', 'LIMIT', and 'ORDER' Statements to a SQL Statement
 
-
-def limit() -> sql.Composable:
-    return sql.SQL(" LIMIT %(limit)s ")
-
-
-def order(arg: str, ascending: bool = True) -> sql.Composable:
-    if ascending:
-        return sql.SQL(" ORDER BY {arg} ASC").format(arg=sql.Identifier(arg))
-    else:
-        return sql.SQL(" ORDER BY {arg} DESC").format(arg=sql.Identifier(arg))
+ArgumentLiteral: TypeAlias = Tuple[str, Any]
+Argument: TypeAlias = ArgumentLiteral | str
+Comparators: TypeAlias = Literal["=", "!=", ">", "<", ">=", "<=", "LIKE", "ILIKE"]
+FilterLiteral: TypeAlias = Tuple[str, Comparators, Any]
+FilterPlaceholder: TypeAlias = Tuple[str, Comparators]
+Filter: TypeAlias = sql.Composable | FilterLiteral | FilterPlaceholder
 
 
-def where() -> sql.Composable:
+def where(filters: Sequence[Filter]) -> sql.Composable:
     "SQL WHERE Clause to precede a set of filters"
-    return sql.SQL(" WHERE ")
+    return (
+        sql.SQL("")
+        if len(filters) == 0
+        else sql.SQL(" WHERE ") + filter_composer(filters)
+    )
 
 
-Comparators = Literal["=", "!=", ">", "<", ">=", "<=", "LIKE"]
-
-
-def union_filter(
-    filters: Dict[str, Comparators] | list[sql.Composable],
-) -> sql.Composable:
-    """
-    Simple Union ('AND') Filter. Filters, when a dictionary, is of the format:
-    {table_column_name:str, Comparator:Literal['=', '!=', '>', '<', '>=', '<=', "LIKE"]}
-    """
-    if len(filters) == 0:
+def limit(val: Optional[str | int]) -> sql.Composable:
+    if val is None:
         return sql.SQL("")
+    if isinstance(val, int):
+        return sql.SQL(" LIMIT {val} ").format(val=sql.Literal(val))
+    else:
+        return sql.SQL(" LIMIT {val_ph} ").format(val_ph=sql.Placeholder(val))
 
-    if isinstance(filters, dict):
-        filters = [_filter(k, v) for k, v in filters.items()]
 
-    return sql.SQL(" AND ").join(filters)
-
-
-def intersection_filter(
-    filters: Dict[str, Comparators] | list[sql.Composable],
-) -> sql.Composable:
-    """
-    Simple Intersection ('OR') Filter. Filters, when a dictionary, is of the format:
-    {table_column_name:str, Comparator:Literal['=', '!=', '>', '<', '>=', '<=']}
-    """
-    if len(filters) == 0:
+def order(arg: Optional[str], ascending: Optional[bool] = True) -> sql.Composable:
+    if arg is None:
         return sql.SQL("")
+    if ascending is False:
+        return sql.SQL(" ORDER BY {arg} DESC").format(arg=sql.Identifier(arg))
+    else:
+        return sql.SQL(" ORDER BY {arg}").format(arg=sql.Identifier(arg))
 
-    if isinstance(filters, dict):
-        filters = [_filter(k, v) for k, v in filters.items()]
 
-    return sql.SQL(" OR ").join(filters)
+def arg_list(args: Sequence[str]) -> sql.Composable:
+    return (
+        sql.SQL("*")
+        if len(args) == 0
+        else sql.SQL(", ").join(map(sql.Identifier, args))
+    )
 
 
-def _filter(arg: str, comparison: Comparators) -> sql.Composable:
-    return sql.SQL("{arg} " + comparison + " {arg_ph}").format(
+def update_args(args: Sequence[Argument]) -> sql.Composable:
+    if len(args) == 0:
+        raise ValueError("Attempting to update arguments, but no values given to SET.")
+    composables = [
+        _arg_placeholder(v) if isinstance(v, str) else _arg_literal(*v) for v in args
+    ]
+    return sql.SQL(", ").join(composables)
+
+
+def _arg_placeholder(arg: str) -> sql.Composable:
+    return sql.SQL("{arg} " + "=" + " {arg_ph}").format(
+        arg=sql.Identifier(arg),
+        arg_ph=sql.Placeholder(arg),
+    )
+
+
+def _arg_literal(arg: str, value: Any) -> sql.Composable:
+    return sql.SQL("{arg} " + "=" + " {arg_lit}").format(
+        arg=sql.Identifier(arg),
+        arg_lit=sql.Literal(value),
+    )
+
+
+def filter_composer(
+    filters: Sequence[Filter], mode: Literal["AND", "OR"] = "AND"
+) -> sql.Composable:
+    composables = [
+        (
+            sql.SQL("(") + v + sql.SQL(")")
+            if isinstance(v, sql.Composable)
+            else _filter_literal(*v) if len(v) == 3 else _filter_placeholder(*v)
+        )
+        for v in filters
+    ]
+    if mode == "OR":
+        return sql.SQL(" OR ").join(composables)
+    else:
+        return sql.SQL(" AND ").join(composables)
+
+
+def _filter_literal(arg: str, comparison: Comparators, value: Any) -> sql.Composable:
+    return sql.SQL("{arg}" + comparison + "{arg_val}").format(
+        arg=sql.Identifier(arg),
+        arg_val=sql.Literal(value),
+    )
+
+
+def _filter_placeholder(arg: str, comparison: Comparators) -> sql.Composable:
+    return sql.SQL("{arg}" + comparison + "{arg_ph}").format(
         arg=sql.Identifier(arg),
         arg_ph=sql.Placeholder(arg),
     )
@@ -90,6 +133,14 @@ def _filter(arg: str, comparison: Comparators) -> sql.Composable:
 
 def list_schemas() -> sql.Composed:
     return sql.SQL("SELECT schema_name FROM information_schema.schemata;").format()
+
+
+def list_tables(schema: str) -> sql.Composed:
+    return sql.SQL(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = {schema_name};"
+    ).format(
+        schema_name=sql.Literal(schema),
+    )
 
 
 def create_schema(schema: str) -> sql.Composed:
@@ -120,28 +171,45 @@ def drop_materialized_view(schema: str, table: str) -> sql.Composed:
     )
 
 
-def list_tables(schema: str) -> sql.Composed:
-    return sql.SQL(
-        """
-        SELECT table_name FROM information_schema.tables
-        WHERE table_schema = {schema_name};
-    """
-    ).format(
-        schema_name=sql.Literal(schema),
+def delete_items(schema: str, table: str, filters: list[Filter]) -> sql.Composed:
+    return sql.SQL("DELETE FROM {schema_name}.{table_name} {filter} CASCADE;").format(
+        schema_name=sql.Identifier(schema),
+        table_name=sql.Identifier(table),
+        filter=where(filters),
     )
 
 
-def delete_items(schema: str, table: str, sql_filter: sql.Composable) -> sql.Composed:
+def select(
+    schema: str | StrEnum,
+    table: str | StrEnum,
+    arguments: Sequence[str],
+    filters: Sequence[Filter],
+    _limit: Optional[str | int] = None,
+    _order: Tuple[str | None, bool | None] = (None, None),
+) -> sql.Composed:
     return sql.SQL(
-        """
-        DELETE FROM {schema_name}.{table_name}
-        {filter}
-        CASCADE;
-    """
+        "SELECT {rtn_args} FROM {schema_name}.{table_name} {filter} {order} {limit};"
     ).format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(table),
-        filter=sql_filter,
+        rtn_args=arg_list(arguments),
+        filter=where(filters),
+        order=order(*_order),
+        limit=limit(_limit),
+    )
+
+
+def update(
+    schema: str | StrEnum,
+    table: str | StrEnum,
+    assignments: list[Argument],
+    filters: list[Filter],
+) -> sql.Composed:
+    return sql.SQL("UPDATE {schema_name}.{table_name} SET {args} {filter};").format(
+        schema_name=sql.Identifier(schema),
+        table_name=sql.Identifier(table),
+        args=update_args(assignments),
+        filter=where(filters),
     )
 
 
@@ -149,6 +217,33 @@ def delete_items(schema: str, table: str, sql_filter: sql.Composable) -> sql.Com
 
 
 # region -------- -------- Security Commands -------- --------
+
+SymbolArgs = Literal[
+    "pkey",
+    "symbol",
+    "name",
+    "source",
+    "exchange",
+    "asset_class",
+    "stored_tick",
+    "stored_minute",
+    "stored_aggregate",
+]
+SYMBOL_ARGS = set(v for v in get_args(SymbolArgs))
+
+STRICT_SYMBOL_ARGS = {
+    "pkey",
+    "source",
+    "exchange",
+    "asset_class",
+    "stored_tick",
+    "stored_minute",
+    "stored_aggregate",
+}
+
+
+def create_search_functions() -> sql.Composed:
+    return sql.SQL("CREATE EXTENSION IF NOT EXISTS pg_trgm;").format()
 
 
 def create_symbol_table() -> sql.Composed:
@@ -161,10 +256,15 @@ def create_symbol_table() -> sql.Composed:
             exchange TEXT NOT NULL,
             asset_class TEXT NOT NULL,
             name TEXT NOT NULL,
-            stored BOOLEAN NOT NULL DEFAULT False,
+            stored_tick BOOLEAN NOT NULL DEFAULT False,
+            stored_minute BOOLEAN NOT NULL DEFAULT False,
+            stored_aggregate BOOLEAN NOT NULL DEFAULT False,
             attrs jsonb,
             CONSTRAINT unique_asset UNIQUE (symbol, source, exchange)
         );
+        CREATE INDEX attrs_gin_idx ON {schema_name}.{table_name} USING gin (attrs);
+        CREATE INDEX name_trgm_idx ON {schema_name}.{table_name} USING gin (name gin_trgm_ops);
+        CREATE INDEX symbol_trgm_idx ON {schema_name}.{table_name} USING gin (symbol gin_trgm_ops);
     """
     ).format(
         schema_name=sql.Identifier(Schema.SECURITY),
@@ -173,23 +273,59 @@ def create_symbol_table() -> sql.Composed:
 
 
 def select_symbols(
-    filters: dict[str, Comparators], include_attrs: bool = False
+    name: Optional[str],
+    symbol: Optional[str],
+    filters: list[Filter],
+    include_attrs: bool = False,
+    attrs: Optional[dict[str, Any]] = None,
+    _limit: Optional[str | int] = None,
 ) -> sql.Composed:
-    rtn_args = {"symbol", "exchange", "name", "asset_class", "pkey", "stored", "source"}
-    if include_attrs:
-        rtn_args |= {"attrs"}
-
+    rtn_args = SYMBOL_ARGS.union({"attrs"}) if include_attrs else SYMBOL_ARGS
     return sql.SQL(
         """
-        SELECT symbol FROM {schema_name}.{table_name}
-        {filter};
+        WITH _base_matches AS ( 
+            {_base_select_stmt} 
+        ),
+        _graded_matches AS (
+            SELECT *, {_score} AS _score FROM {_inner_select}
+        )
+        SELECT {_rtn_args} FROM _graded_matches WHERE _score > 0 ORDER BY _score DESC {_limit};
     """
     ).format(
-        schema_name=sql.Identifier(Schema.SECURITY),
-        table_name=sql.Identifier(AssetTbls.SYMBOLS),
-        rtn_args=sql.SQL(",").join([sql.Identifier(arg) for arg in rtn_args]),
-        filter=union_filter(filters),
+        _base_select_stmt=select(Schema.SECURITY, AssetTbls.SYMBOLS, [], filters),
+        _inner_select=_inner_attrs_select(attrs),
+        _rtn_args=arg_list([*rtn_args]),
+        _name=sql.Literal(name),
+        _symbol=sql.Literal(symbol),
+        _score=_symbol_score(name, symbol),
+        _limit=limit(_limit),
     )
+
+
+def _symbol_score(name: Optional[str], symbol: Optional[str]) -> sql.Composable:
+    # Utilizes similarity function from pg_trgm to rank matches by relevancy
+    match name, symbol:
+        case str(), str():
+            return sql.SQL(
+                "(similarity(name, {_name}) + similarity(symbol, {_symbol}))"
+            )
+        case None, str():
+            return sql.SQL("similarity(name, {_name})")
+        case str(), None:
+            return sql.SQL("similarity(symbol, {_symbol})")
+        case _:
+            return sql.SQL("1")
+
+
+def _inner_attrs_select(attrs: Optional[dict[str, Any]] = None) -> sql.Composable:
+    if attrs is None:
+        # No Additonal Select Statement Necessary
+        return sql.SQL("_base_matches")
+    else:
+        # Perform an Inner Select on _base_matches to test for the given Attrs.
+        return sql.SQL("( SELECT * FROM _base_matches WHERE attrs @> {json} )").format(
+            json=dumps(attrs)
+        )
 
 
 def create_symbol_buffer() -> sql.Composed:
@@ -355,6 +491,14 @@ def refresh_timeseries_metadata_view(schema: str) -> sql.Composed:
         schema_name=sql.Identifier(schema),
         view_name=sql.Identifier(SeriesTbls._METADATA),
     )
+
+
+def select_timeseries_metadata(
+    schema: str,
+    rtn_args: list[str] = ["table_name", "start_date", "end_date"],
+    filters: list[Filter] = [],
+) -> sql.Composed:
+    return select(schema, SeriesTbls._METADATA, rtn_args, filters)
 
 
 # endregion
@@ -850,6 +994,7 @@ class Generic(StrEnum):
     "Generic Cmds that may apply to multiple table types"
 
     SCHEMA = auto()
+    SCHEMA_TABLES = auto()
     TABLE = auto()
     VIEW = auto()
 
@@ -873,6 +1018,7 @@ class AssetTbls(StrEnum):
 
     SYMBOLS = auto()
     SYMBOLS_BUFFER = auto()
+    _SYMBOL_SEARCH_FUNCS = auto()
     # SPLITS = auto() # Currently not Implemented. All Data is assumed to be Adjusted.
     # DIVIDENDS = auto()
     # EARNINGS = auto()
@@ -939,6 +1085,7 @@ OPERATION_MAP: OperationMap = {
         SeriesTbls.RAW_AGGREGATE: create_raw_aggregate_table,
         SeriesTbls.RAW_AGG_BUFFER: create_raw_agg_buffer,
         SeriesTbls.CONTINOUS_TICK_AGG: create_continuous_tick_aggregate,
+        AssetTbls._SYMBOL_SEARCH_FUNCS: create_search_functions,
         AssetTbls.SYMBOLS: create_symbol_table,
         AssetTbls.SYMBOLS_BUFFER: create_symbol_buffer,
         # AssetTbls.SPLITS: ,
@@ -960,7 +1107,9 @@ OPERATION_MAP: OperationMap = {
         AssetTbls.SYMBOLS_BUFFER: upsert_copied_symbols,
     },
     Operation.UPDATE: {
+        Generic.TABLE: update,
         SeriesTbls._ORIGIN: update_origin,
+        AssetTbls.SYMBOLS: partial(update, Schema.SECURITY, AssetTbls.SYMBOLS),
     },
     Operation.COPY: {
         SeriesTbls.TICK_BUFFER: copy_ticks,
@@ -968,15 +1117,18 @@ OPERATION_MAP: OperationMap = {
         AssetTbls.SYMBOLS_BUFFER: copy_symbols,
     },
     Operation.SELECT: {
-        Generic.TABLE: list_tables,
+        Generic.TABLE: select,
+        Generic.SCHEMA_TABLES: list_tables,
         Generic.SCHEMA: list_schemas,
         SeriesTbls._ORIGIN: select_origin,
+        SeriesTbls._METADATA: select_timeseries_metadata,
         AssetTbls.SYMBOLS: select_symbols,
         # AssetTbls.SPLITS: ,
         # AssetTbls.EARNINGS: ,
         # AssetTbls.DIVIDENDS: ,
     },
     Operation.DELETE: {
+        Generic.TABLE: delete_items,
         SeriesTbls._ORIGIN: delete_origin,
     },
     Operation.DROP: {

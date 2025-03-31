@@ -177,10 +177,12 @@ class TimescaleDB_EXT(TimeScaleDB):
     # region ---- ---- ---- Private Security Sub-routines ---- ---- ----
 
     def _ensure_symbols_table_exists(self, cursor: TupleCursor):
-        cursor.execute(self[Op.SELECT, Generic.TABLE](Schema.SECURITY))
+        cursor.execute(self[Op.SELECT, Generic.SCHEMA_TABLES](Schema.SECURITY))
         tables: set[str] = {rsp[0] for rsp in cursor.fetchall()}
 
         if AssetTbls.SYMBOLS not in tables:
+            # Init pg_trgm Text Search Functions
+            cursor.execute(self[Op.CREATE, AssetTbls._SYMBOL_SEARCH_FUNCS]())
             log.info("Creating Table '%s'.'%s'", Schema.SECURITY, AssetTbls.SYMBOLS)
             cursor.execute(self[Op.CREATE, AssetTbls.SYMBOLS]())
 
@@ -195,7 +197,7 @@ class TimescaleDB_EXT(TimeScaleDB):
         config: TimeseriesConfig,
     ):
         "Script to Make Changes to the configuration of stored Timeseries Data"
-        cursor.execute(self[Op.SELECT, Generic.TABLE](schema))
+        cursor.execute(self[Op.SELECT, Generic.SCHEMA_TABLES](schema))
         tables: set[str] = {rsp[0] for rsp in cursor.fetchall()}
         log.info(
             "---- ---- ---- Configuring Timeseries Schema '%s' ---- ---- ----", schema
