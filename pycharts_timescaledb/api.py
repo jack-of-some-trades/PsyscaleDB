@@ -38,6 +38,7 @@ from .sql_cmds import (
     Schema,
     SeriesTbls,
     Commands,
+    SymbolArgs,
 )
 from .orm import TimeseriesConfig
 
@@ -372,11 +373,58 @@ class TimeScaleDB:
 
     def search_symbols(
         self,
-        filter_args: dict[str, Any],
+        filter_args: dict[SymbolArgs | str, Any],
         return_attrs: bool = False,
         attrs_search: bool = False,
         limit: int = 100,
+        *,
+        strict_symbol_search: bool | Literal["ILIKE", "LIKE", "="] = False,
     ) -> list[dict]:
+        """
+        Search the database's symbols table returning all the symbols that match the given criteria.
+        Search function supports trigram based fuzzy name + symbol search.
+
+        -- PARAMS --
+        - filter_args: dict[SymbolArgs | str : Any]
+            - The filtering arguments that need to be matched against. By default only the keys that
+            match the table column names (SymbolArgs Literal, e.g. pkey, name, symbol, etc.) will be
+            used.
+            - All Arguments aside from 'name' and 'symbol' will be used in a strict '=' comparison
+            filter. 'name' will always be used in a fuzzystr trigram search where the results are
+            ordered by relevancy. by default, 'symbol' will also be a fuzzystr trigram search.
+            - When a 'pkey' filter is given, all other filter keys are ignored and the table is
+            searched for the given integer pkey. This is because, by table definition, the pkey
+            will be unique and can only ever return a single row.
+            - Additional argument keys  that are not column names of the table (Not in SymbolArgs
+            Literal) will be ignored by default. See attrs_search for more on this behavior.
+
+        - return_attrs: boolean.
+            - When True return an 'attrs' dictionary that has all additional attributes of the
+            symbol that are stored in the 'attrs' column of the table.
+
+        - attrs_search: boolean.
+            - When True any additional keys that are given as filters args, but not recognized as
+            table columns, will be used in a strict search against that 'attrs' JSON Column of the
+            table.
+            - When False additional keys within the filter_args are ignored.
+            - i.e. when true, if {'shortable':True} is passed in filter_args then only rows that
+            have a defined 'shortable'= True Attrubute will be returned.
+            - This search will only ever be a strict '=' comparison, so if searching for a string
+            or int the value given must be exact.
+
+        - limit: int
+            - The Integer limit of symbol results to return.
+
+        - strict_symbol_search: Boolean | Literal["ILIKE", "LIKE", "="] : default False.
+            - When False a fuzzystr trigram search is used and the results are ordered by relevancy.
+            Even if an exact match for the symbol is returned, this will still result in other
+            similar symbols being returned.
+            - When not False the symbol search will use the given PostgreSQL comparator. True
+            equates to passing 'ILIKE' Which ignores case.
+            - This is far more useful when passing a symbol with wildcard args. e.g.
+            'ILIKE' + {symbol:'sp'} will likely not return results, 'ILIKE' + {symbol:'sp%'}
+            will return all symbols starting with 'SP', case insensitive.
+        """
 
         if "pkey" in filter_args:
             # Fast Track PKEY Searches since there will only ever be 1 symbol returned
@@ -390,12 +438,24 @@ class TimeScaleDB:
             name = filter_args.get("name", None)
             symbol = filter_args.get("symbol", None)
 
+            if strict_symbol_search and symbol is not None:
+                # Determine if symbol is passed as a strict or fuzzy parameter
+                compare_method = (
+                    strict_symbol_search
+                    if isinstance(strict_symbol_search, str)
+                    else "ILIKE"  # Default search for similar symbols that match ignoring case.
+                )
+                filters.append(("symbol", compare_method, symbol))
+                symbol = None  # Prevents the 'similarity' search from being added
+
             # Filter all extra given filter params into a separate dict
             attrs = (
-                dict((k, v) for k, v in filter_args if k not in SYMBOL_ARGS)
+                dict((k, v) for k, v in filter_args.items() if k not in SYMBOL_ARGS)
                 if attrs_search
                 else None
             )
+            if attrs and len(attrs) == 0:
+                attrs = None
 
         with self._cursor(dict_cursor=True) as cursor:
             cursor.execute(

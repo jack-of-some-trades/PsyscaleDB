@@ -188,7 +188,7 @@ def select(
     _order: Tuple[str | None, bool | None] = (None, None),
 ) -> sql.Composed:
     return sql.SQL(
-        "SELECT {rtn_args} FROM {schema_name}.{table_name} {filter} {order} {limit};"
+        "SELECT {rtn_args} FROM {schema_name}.{table_name}{filter}{order}{limit};"
     ).format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(table),
@@ -284,7 +284,7 @@ def select_symbols(
     return sql.SQL(
         """
         WITH _base_matches AS ( 
-            {_base_select_stmt} 
+            SELECT * from {schema_name}.{table_name}{_filters}
         ),
         _graded_matches AS (
             SELECT *, {_score} AS _score FROM {_inner_select}
@@ -292,11 +292,11 @@ def select_symbols(
         SELECT {_rtn_args} FROM _graded_matches WHERE _score > 0 ORDER BY _score DESC {_limit};
     """
     ).format(
-        _base_select_stmt=select(Schema.SECURITY, AssetTbls.SYMBOLS, [], filters),
+        schema_name=sql.Identifier(Schema.SECURITY),
+        table_name=sql.Identifier(AssetTbls.SYMBOLS),
+        _filters=where(filters),
         _inner_select=_inner_attrs_select(attrs),
         _rtn_args=arg_list([*rtn_args]),
-        _name=sql.Literal(name),
-        _symbol=sql.Literal(symbol),
         _score=_symbol_score(name, symbol),
         _limit=limit(_limit),
     )
@@ -306,15 +306,17 @@ def _symbol_score(name: Optional[str], symbol: Optional[str]) -> sql.Composable:
     # Utilizes similarity function from pg_trgm to rank matches by relevancy
     match name, symbol:
         case str(), str():
-            return sql.SQL(
+            stmt = sql.SQL(
                 "(similarity(name, {_name}) + similarity(symbol, {_symbol}))"
             )
         case None, str():
-            return sql.SQL("similarity(name, {_name})")
+            stmt = sql.SQL("similarity(symbol, {_symbol})")
         case str(), None:
-            return sql.SQL("similarity(symbol, {_symbol})")
+            stmt = sql.SQL("similarity(name, {_name})")
         case _:
-            return sql.SQL("1")
+            stmt = sql.SQL("1")
+
+    return stmt.format(_name=sql.Literal(name), _symbol=sql.Literal(symbol))
 
 
 def _inner_attrs_select(attrs: Optional[dict[str, Any]] = None) -> sql.Composable:
