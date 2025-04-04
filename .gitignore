@@ -11,6 +11,9 @@
 *.cpython-313.pyc
 __pycache__
 
+# Development Testing Code #
+/scripts/test.py
+
 # Packages #
 ############
 # it's better to unpack these files and commit the raw source

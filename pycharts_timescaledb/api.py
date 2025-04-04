@@ -30,10 +30,13 @@ from psycopg.pq._enums import ExecStatus
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from .sql_cmds import (
+    METADATA_ARGS,
     STRICT_SYMBOL_ARGS,
     SYMBOL_ARGS,
     AssetTbls,
     Generic,
+    MetadataArgs,
+    MetadataInfo,
     Operation as Op,
     Schema,
     SeriesTbls,
@@ -124,6 +127,7 @@ class TimeScaleDB:
             raise e  # Give some more informative info here?
 
         self.cmds = Commands()
+        self._ensure_securites_schema_format()
         self._read_db_timeseries_config()
 
     def __del__(self):
@@ -367,6 +371,25 @@ class TimeScaleDB:
                 "See timescale_ext.py for necessary class extention and an Example Configuration."
             )
 
+    def _ensure_securites_schema_format(self):
+        with self._cursor() as cursor:
+            cursor.execute(self[Op.SELECT, Generic.SCHEMA_TABLES](Schema.SECURITY))
+            tables: set[str] = {rsp[0] for rsp in cursor.fetchall()}
+
+            if AssetTbls.SYMBOLS not in tables:
+                # Init Symbols Table & pg_trgm Text Search Functions
+                log.info("Creating Table '%s'.'%s'", Schema.SECURITY, AssetTbls.SYMBOLS)
+                cursor.execute(self[Op.CREATE, AssetTbls._SYMBOL_SEARCH_FUNCS]())
+                cursor.execute(self[Op.CREATE, AssetTbls.SYMBOLS]())
+
+            if AssetTbls._METADATA not in tables:
+                # Init Symbol Data Range Metadata table & support function
+                log.info(
+                    "Creating Table '%s'.'%s'", Schema.SECURITY, AssetTbls._METADATA
+                )
+                cursor.execute(self[Op.CREATE, AssetTbls._METADATA_FUNC]())
+                cursor.execute(self[Op.CREATE, AssetTbls._METADATA]())
+
     # endregion
 
     # region ----------- Public Database Interaction Methods -----------
@@ -376,7 +399,7 @@ class TimeScaleDB:
         filter_args: dict[SymbolArgs | str, Any],
         return_attrs: bool = False,
         attrs_search: bool = False,
-        limit: int = 100,
+        limit: int | None = 100,
         *,
         strict_symbol_search: bool | Literal["ILIKE", "LIKE", "="] = False,
     ) -> list[dict]:
@@ -413,7 +436,7 @@ class TimeScaleDB:
             or int the value given must be exact.
 
         - limit: int
-            - The Integer limit of symbol results to return.
+            - The Optional Integer limit of symbol results to return.
 
         - strict_symbol_search: Boolean | Literal["ILIKE", "LIKE", "="] : default False.
             - When False a fuzzystr trigram search is used and the results are ordered by relevancy.
@@ -464,5 +487,91 @@ class TimeScaleDB:
                 )
             )
             return cursor.fetchall()
+
+    def update_symbol(
+        self, pkey: int | list[int], args: dict[SymbolArgs | str, Any]
+    ) -> bool:
+        """
+        Update a Single Symbol or list of symbols, by primary key, with the given arguments.
+
+        This method is remained general for utility purposes. It should generally just be used to
+        update the stored_[tick/minute/aggregate] columns. All Other parameters should remain
+        constant by nature. To insert symbols see the API_Extension that allows this to be done
+        in bulk.
+
+        Note: Setting any stored column = False does not Delete any Data.
+
+        :params:
+        - pkey : int or list[int]
+            - Primary key of the symbol to update. May be a single value or list of values.
+            - The Primary key can be retrived in the return object from symbol_search.
+
+        - args : Dict[SymbolArgs, Any]
+            - A Dictionary of Column Values to update. If PKEY is passed as a Key it will be
+            ignored. Extra Keys are Ignored.
+            - Note: This can throw a psycopg.Database Error if passed an update to Symbol, Source,
+            or Exchange that would result in a change that would violate the UNIQUE flag on those
+            collective parameters.
+
+        :returns: Boolean, True on Successful Update.
+        """
+        if "pkey" in args:
+            args.pop("pkey")
+        _args = [(k, v) for k, v in args.items() if k in SYMBOL_ARGS]
+        if len(_args) == 0:
+            log.warning(
+                "Attemping to update Database symbol(s) but no arg updates where given. pkey(s) = %s",
+                pkey,
+            )
+            return False
+
+        pkey = [pkey] if isinstance(pkey, int) else pkey
+        if len(pkey) == 0:
+            log.warning(
+                "Attemping to update Database symbol(s) but no pkeys were given"
+            )
+            return False
+
+        # Convert The pkeys to a List so only one Update Command needs to be sent.
+        _filter = sql.SQL("pkey=ANY(ARRAY[{pkeys}])").format(
+            pkeys=sql.SQL(",").join(sql.Literal(v) for v in pkey)
+        )
+
+        with self._cursor() as cursor:
+            cursor.execute(self[Op.UPDATE, AssetTbls.SYMBOLS](_args, _filter))
+            return (
+                cursor.statusmessage is not None and cursor.statusmessage == "UPDATE 1"
+            )
+
+    def symbol_series_metadata(
+        self,
+        pkey: int,
+        filters: dict[MetadataArgs | str, Any] = {},
+    ) -> list[MetadataInfo]:
+        """
+        Return MetaData about the series information stored for a given symbol, by primary key.
+
+        --PARAMS--
+        - pkey : integer
+            - Primary Key of the desired Symbol. Value is returned as a value in the search_symbols
+            return object.
+        - filters : Dict[MetadataArgs, Any]
+            - Filtering Arguments for the returned MetaData. Extra Keys that don't map to columns
+            of the table are ignored. Optional Arguments are as follows.
+            - table_name : str
+            - schema_name : str
+            - is_raw_data : boolean
+            - Timeframe : int (Number of seconds elapsed in the period)
+            - trading_hours_type : Literal['ext', 'rth', 'eth', 'none']
+        """
+
+        _filters = [("pkey", "=", pkey)]  # Ensure a Pkey filter is Passed
+        _filters.extend(
+            [(k, "=", v) for k, v in filters.items() if k in (METADATA_ARGS - {"pkey"})]
+        )
+
+        with self._cursor(dict_cursor=True) as cursor:
+            cursor.execute(self[Op.SELECT, AssetTbls._METADATA](_filters))
+            return [MetadataInfo(**row) for row in cursor.fetchall()]
 
     # endregion

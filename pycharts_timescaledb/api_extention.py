@@ -3,11 +3,12 @@
 import logging
 from typing import Literal, Optional, Tuple
 
-from pandas import DataFrame, Series, Timedelta
+from pandas import DataFrame, Series, Timedelta, Timestamp
 
 from .orm import TimeseriesConfig
 from .sql_cmds import (
     Generic,
+    MetadataInfo,
     Operation as Op,
     Schema,
     AssetTbls,
@@ -53,13 +54,6 @@ class TimescaleDB_EXT(TimeScaleDB):
                 cursor.execute(self[Op.CREATE, Generic.SCHEMA](schema))
 
             cursor.connection.commit()
-
-            # Create Security Tables as Needed.
-            self._ensure_symbols_table_exists(cursor)
-
-            # Ensure a sub_function needed for the _metadata table is present
-            log.debug("Ensuring Timeseries _metadata sub-function exists.")
-            cursor.execute(self[Op.CREATE, SeriesTbls._METADATA_FUNC]())
 
             # Create Each Class of Timeseries Table
             if tick_tables is not None:
@@ -142,8 +136,6 @@ class TimescaleDB_EXT(TimeScaleDB):
         response = DataFrame()
 
         with self._cursor() as cursor:
-            self._ensure_symbols_table_exists(cursor)
-
             # Create & Inject the Data into a Temporary Table
             cursor.execute(self[Op.CREATE, AssetTbls.SYMBOLS_BUFFER]())
             copy_cmd = self[Op.COPY, AssetTbls.SYMBOLS_BUFFER](
@@ -174,17 +166,63 @@ class TimescaleDB_EXT(TimeScaleDB):
 
     # endregion
 
-    # region ---- ---- ---- Private Security Sub-routines ---- ---- ----
+    # region ---- ---- ---- Public Timeseries Sub-routines ---- ---- ----
 
-    def _ensure_symbols_table_exists(self, cursor: TupleCursor):
-        cursor.execute(self[Op.SELECT, Generic.SCHEMA_TABLES](Schema.SECURITY))
-        tables: set[str] = {rsp[0] for rsp in cursor.fetchall()}
+    def get_symbol_series_updates(self, pkey: int) -> list[MetadataInfo]:
+        """
+        Augmented call to TimesacleDB.symbol_series_metadata() to ensure MetadataInfo dataclasses
+        are returned for tables if the Schema's TableConfig says there should be data for the symbol
+        but there isn't.
 
-        if AssetTbls.SYMBOLS not in tables:
-            # Init pg_trgm Text Search Functions
-            cursor.execute(self[Op.CREATE, AssetTbls._SYMBOL_SEARCH_FUNCS]())
-            log.info("Creating Table '%s'.'%s'", Schema.SECURITY, AssetTbls.SYMBOLS)
-            cursor.execute(self[Op.CREATE, AssetTbls.SYMBOLS]())
+        i.e. When A Symbol was just flagged to be stored but has nothing stored yet
+        symbol_series_metadata will not return any Metadata since it only checks what *is* stored,
+        not what should be. This function will return what is stored + what should be stored.
+
+        If no information is stored for a given table, but should be, the start_date & end_date will
+        be set to "1800-01-01" So when a request is made it should automatically fetch all recorded
+        data for the symbol.
+        """
+
+        with self._cursor(dict_cursor=True) as cursor:
+            _rtn_args = ["asset_class", "store_tick", "store_minute", "store_aggregate"]
+            _filter = ("pkey", "=", pkey)
+
+            cursor.execute(
+                self[Op.SELECT, Generic.TABLE](
+                    Schema.SECURITY, AssetTbls.SYMBOLS, _rtn_args, _filter
+                )
+            )
+            # fetchall instead of fetchone is preferred to guarantee buffer is empty.
+            rsp = cursor.fetchall()
+            if len(rsp) == 0:
+                raise ValueError(
+                    f"Cannot determine Symbol updates needed. {pkey = } is unknown."
+                )
+            rsp = rsp[0]
+            asset_class = rsp["asset_class"]
+
+        metadata = []
+        try:
+            if rsp["store_tick"]:
+                metadata.extend(
+                    self._missing_metadata_tables(pkey, asset_class, Schema.TICK_DATA)
+                )
+            if rsp["store_minute"]:
+                metadata.extend(
+                    self._missing_metadata_tables(pkey, asset_class, Schema.MINUTE_DATA)
+                )
+            if rsp["store_aggregate"]:
+                metadata.extend(
+                    self._missing_metadata_tables(
+                        pkey, asset_class, Schema.AGGREGATE_DATA
+                    )
+                )
+        except KeyError as e:
+            raise KeyError(  # Reraise a more informative error.
+                "Ensure configure_timeseries_schema has been run prior to inserting symbol data."
+            ) from e
+
+        return metadata
 
     # endregion
 
@@ -210,10 +248,6 @@ class TimescaleDB_EXT(TimeScaleDB):
         else:
             tables -= {SeriesTbls._ORIGIN.value}
             log.debug("'%s'.'%s' Table Already Exists\n", schema, SeriesTbls._ORIGIN)
-
-        # Create Metadata View if it does not exist in the schema (wont be listed in tables)
-        log.info("Ensuring Creation of '%s'.'%s' View\n", schema, SeriesTbls._METADATA)
-        cursor.execute(self[Op.CREATE, SeriesTbls._METADATA](schema))
 
         stored_config = self.table_config[schema]
 
@@ -255,7 +289,7 @@ class TimescaleDB_EXT(TimeScaleDB):
             )
 
             # Generate Raw insertion tables
-            for tbl in config.inserted_tables(asset):
+            for tbl in config.raw_tables(asset):
                 log.info("Generating table for: '%s'.'%s'", schema, tbl)
                 tbl_type = (
                     SeriesTbls.TICK
@@ -424,5 +458,25 @@ class TimescaleDB_EXT(TimeScaleDB):
                 tbl_type = Generic.TABLE if tbl.raw else Generic.VIEW
                 cursor.execute(cmd := self[Op.DROP, tbl_type](schema, tbl.table_name))
                 log.debug(cmd.as_string())
+
+    def _missing_metadata_tables(self, pkey: int, asset_class: str, schema: Schema):
+        stored_metadata = self.symbol_series_metadata(
+            pkey, {"schema_name": schema, "is_raw_data": True}
+        )
+        req_tables = self.table_config[schema].raw_tables(asset_class)
+        stored_tables = (mdata.table for mdata in stored_metadata)
+        # As long as the has of an AssetTable is a string this will work.
+        missing_tables = set(req_tables).difference(stored_tables)
+        missing_metadata = [
+            MetadataInfo(
+                table.table_name,
+                schema,
+                Timestamp("1800-01-01"),  # Default values
+                Timestamp("1800-01-01"),
+                table,
+            )
+            for table in missing_tables
+        ]
+        return missing_metadata
 
     # endregion

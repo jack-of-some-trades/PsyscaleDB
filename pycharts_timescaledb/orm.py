@@ -404,9 +404,7 @@ class TimeseriesConfig:
         if not inserted:
             return self._std_tables[asset_class]
         else:
-            return self._std_tables[asset_class] + self.inserted_tables(
-                asset_class, "std"
-            )
+            return self._std_tables[asset_class] + self.raw_tables(asset_class, "std")
 
     def rth_tables(self, asset_class: str, inserted: bool = False) -> List[AssetTable]:
         if asset_class not in self.asset_classes:
@@ -414,9 +412,7 @@ class TimeseriesConfig:
         if not inserted:
             return self._rth_tables[asset_class]
         else:
-            return self._rth_tables[asset_class] + self.inserted_tables(
-                asset_class, "rth"
-            )
+            return self._rth_tables[asset_class] + self.raw_tables(asset_class, "rth")
 
     def eth_tables(self, asset_class: str, inserted: bool = False) -> List[AssetTable]:
         if asset_class not in self.asset_classes:
@@ -424,11 +420,9 @@ class TimeseriesConfig:
         if not inserted:
             return self._eth_tables[asset_class]
         else:
-            return self._eth_tables[asset_class] + self.inserted_tables(
-                asset_class, "eth"
-            )
+            return self._eth_tables[asset_class] + self.raw_tables(asset_class, "eth")
 
-    def inserted_tables(
+    def raw_tables(
         self, asset_class: str, rth: Literal["all", "std", "rth", "eth"] = "all"
     ) -> List[AssetTable]:
         if asset_class not in self.asset_classes:

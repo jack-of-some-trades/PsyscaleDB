@@ -26,6 +26,11 @@ def _import_alpaca(db: TimescaleDB_EXT, api, on_conflict: Literal["ignore", "upd
     """
     Inserts securities from alpaca separating them into asset_classes US_Stock, US_Fund, & Crypto
     Updates are not dynamic, they're forced when a Symbol & Exchange pair are already in the table.
+
+    Currently this will always insert unique (Symbol, Exchange) pairs. This leads to ab edge case bug.
+    If either of these parameters update than a new pkey will be made when in practice the value needs
+    to be updated. This could be fixed by ensuring a unique ID or CUSID that is located within the
+    attrs column for Alpaca Symbols.
     """
     filtered_assets = api.assets[
         api.assets["tradable"].to_numpy()
@@ -34,7 +39,7 @@ def _import_alpaca(db: TimescaleDB_EXT, api, on_conflict: Literal["ignore", "upd
 
     extra_cols = set(api.assets.columns) - {
         "sec_type",
-        "cusip",  # Standardized Id of the symbol
+        "cusip",  # Standardized SEC Id of the symbol
         "name",
         "ticker",
         "exchange",
@@ -55,7 +60,7 @@ def _import_alpaca(db: TimescaleDB_EXT, api, on_conflict: Literal["ignore", "upd
     filtered_assets.loc[_etfs, "asset_class"] = "us_fund"
     filtered_assets.loc[~_etfs & ~_cryptos, "asset_class"] = "us_stock"
     filtered_assets.loc[_cryptos, "asset_class"] = "crypto"
-    filtered_assets.loc[_cryptos, "exchange"] = "alpaca"
+    filtered_assets.loc[_cryptos, "exchange"] = "alpaca_crypto"
 
     log.info("# of Alpaca Symbols: %s", len(filtered_assets))
     log.info(
