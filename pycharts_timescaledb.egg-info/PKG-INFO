@@ -1,4 +1,4 @@
-Metadata-Version: 2.2
+Metadata-Version: 2.4
 Name: pycharts_timescaledb
 Version: 0.0.0
 Summary: Postgres + TimescaleDB Extention for use with Lightweight-Pycharts' Broker-API Plugin System.
@@ -6,9 +6,11 @@ Author: jack_of_some_trades
 License: TBD
 Requires-Python: >=3.12
 Description-Content-Type: text/markdown
+Requires-Dist: alpaca-py>=0.39.1
+Requires-Dist: lightweight-pycharts
 Requires-Dist: pandas>=2.2.2
+Requires-Dist: psycopg[binary,pool]>=3.2.6
 Requires-Dist: python-dotenv>=1.0.1
-Requires-Dist: psycopg>=3.2.6
 
 TimescaleDB Extention for Lightweight-Pycharts.
 Designed to store Timeseries Data Locally and join the data upon retrieval

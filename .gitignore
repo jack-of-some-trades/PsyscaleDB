@@ -31,6 +31,7 @@ __pycache__
 ######################
 *.log
 *.env
+*.venv
 
 
 # OS generated files #
