@@ -127,7 +127,7 @@ class TimeScaleDB:
             raise e  # Give some more informative info here?
 
         self.cmds = Commands()
-        self._ensure_securites_schema_format()
+        self._ensure_securities_schema_format()
         self._read_db_timeseries_config()
 
     def __del__(self):
@@ -279,11 +279,17 @@ class TimeScaleDB:
             ) from e
 
         # Ensure Timescale Image has been pulled.
-        p = subprocess.run(
-            ["docker", "images", TIMESCALE_IMAGE],
-            capture_output=True,
-            check=True,
-        )
+        try:
+            p = subprocess.run(
+                ["docker", "images", TIMESCALE_IMAGE],
+                capture_output=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise OSError(
+                "Docker Images Command Failed, Ensure Docker Engine is Running"
+            ) from e
+
         if len(p.stdout.decode().strip().split("\n")) <= 1:
             # i.e. STDOut only returned table heading and no rows listing available images.
             raise OSError(
@@ -371,7 +377,7 @@ class TimeScaleDB:
                 "See timescale_ext.py for necessary class extention and an Example Configuration."
             )
 
-    def _ensure_securites_schema_format(self):
+    def _ensure_securities_schema_format(self):
         with self._cursor() as cursor:
             cursor.execute(self[Op.SELECT, Generic.SCHEMA_TABLES](Schema.SECURITY))
             tables: set[str] = {rsp[0] for rsp in cursor.fetchall()}
