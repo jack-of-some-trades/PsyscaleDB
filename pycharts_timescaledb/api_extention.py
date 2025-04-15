@@ -214,17 +214,15 @@ class TimescaleDB_EXT(TimeScaleDB):
         try:
             if rsp["store_tick"]:
                 metadata.extend(
-                    self._missing_metadata_tables(pkey, asset_class, Schema.TICK_DATA)
+                    self._all_symbol_metadata(pkey, asset_class, Schema.TICK_DATA)
                 )
             if rsp["store_minute"]:
                 metadata.extend(
-                    self._missing_metadata_tables(pkey, asset_class, Schema.MINUTE_DATA)
+                    self._all_symbol_metadata(pkey, asset_class, Schema.MINUTE_DATA)
                 )
             if rsp["store_aggregate"]:
                 metadata.extend(
-                    self._missing_metadata_tables(
-                        pkey, asset_class, Schema.AGGREGATE_DATA
-                    )
+                    self._all_symbol_metadata(pkey, asset_class, Schema.AGGREGATE_DATA)
                 )
         except KeyError as e:
             raise KeyError(  # Reraise a more informative error.
@@ -314,7 +312,25 @@ class TimescaleDB_EXT(TimeScaleDB):
             else SeriesTbls.RAW_AGG_BUFFER
         )
 
+        # region ---- Filter Timestamps When Purely Inserting Data. ---
         data_fmt = series_df.df
+
+        if on_conflict == "error":
+            # When inserting ensure only the range that needs to be added is.
+            # Pretty common there's 1 extra data point at the start of a df.
+            before_start = data_fmt["dt"] < metadata.start_date
+            after_end = data_fmt["dt"] > metadata.end_date
+            dt_filter = before_start | after_end
+
+            if not dt_filter.all():
+                extra_data = series_df.df[~dt_filter]
+                log.debug(
+                    "Given %s extra data point(s), dropping the following :\n %s",
+                    len(extra_data),
+                    extra_data,
+                )
+                data_fmt = data_fmt[dt_filter]
+        # endregion
 
         with self._cursor() as cursor:
             # Create & Inject the Data into a Temporary Table
@@ -336,6 +352,8 @@ class TimescaleDB_EXT(TimeScaleDB):
             status = cursor.statusmessage
 
         log.info("Symbol Data Upsert Status Message: %s", status)
+        self._update_series_data_edit_record(metadata, data_fmt, table)
+        # endregion
 
     def refresh_aggregate_metadata(self):
         """
@@ -720,13 +738,19 @@ class TimescaleDB_EXT(TimeScaleDB):
                 cursor.execute(cmd := self[Op.DROP, tbl_type](schema, tbl.table_name))
                 log.debug(cmd.as_string())
 
-    def _missing_metadata_tables(self, pkey: int, asset_class: str, schema: Schema):
+    def _all_symbol_metadata(
+        self, pkey: int, asset_class: str, schema: Schema
+    ) -> list[MetadataInfo]:
+        """
+        Returns a list of all Metadata for a given pkey, asset class, and schema.
+        Returned list is guerenteed to have both metadata that is stored and that should be stored.
+        """
         stored_metadata = self.symbol_series_metadata(
             pkey, {"schema_name": schema, "is_raw_data": True}
         )
         req_tables = self.table_config[schema].raw_tables(asset_class)
-        stored_tables = (mdata.table for mdata in stored_metadata)
-        # As long as the has of an AssetTable is a string this will work.
+        stored_tables = [mdata.table for mdata in stored_metadata]
+        # As long as the hash of an AssetTable is a string this will work.
         missing_tables = set(req_tables).difference(stored_tables)
         missing_metadata = [
             MetadataInfo(
@@ -738,6 +762,43 @@ class TimescaleDB_EXT(TimeScaleDB):
             )
             for table in missing_tables
         ]
-        return missing_metadata
+
+        stored_metadata.extend(missing_metadata)
+        return stored_metadata
+
+    def _update_series_data_edit_record(
+        self, metadata: MetadataInfo, data: DataFrame, table: AssetTable
+    ):
+        # Ensure records exist in this instance
+        if not hasattr(self, "_altered_tables"):
+            # pylint: disable=attribute-defined-outside-init
+            self._altered_tables: dict[Schema | str, set[str]] = {}
+            self._altered_tables_mdata: dict[Schema | str, dict[str, MetadataInfo]] = {}
+
+        # Ensure the schema key exists in both dicts
+        if metadata.schema_name not in self._altered_tables:
+            self._altered_tables[metadata.schema_name] = set()
+            self._altered_tables_mdata[metadata.schema_name] = {}
+
+        # Update / Add the Necessary Metadata.
+        if table in self._altered_tables[metadata.schema_name]:
+            # Join the metadata keeping track of the full data-range edited
+            mdata = self._altered_tables_mdata[metadata.schema_name][table.table_name]
+            mdata.start_date = min(mdata.start_date, data.iloc[0]["dt"])
+            mdata.end_date = max(mdata.end_date, data.iloc[-1]["dt"])
+            self._altered_tables_mdata[metadata.schema_name][table.table_name] = mdata
+
+        else:
+            # Construct a new metadata instance to add to the records
+            # Start / End Dates represent ranges that were updated/inserted
+            mdata = MetadataInfo(
+                table.table_name,
+                metadata.schema_name,
+                data.iloc[0]["dt"],
+                data.iloc[-1]["dt"],
+                table,
+            )
+            self._altered_tables[metadata.schema_name].add(table.table_name)
+            self._altered_tables_mdata[metadata.schema_name][table.table_name] = mdata
 
     # endregion

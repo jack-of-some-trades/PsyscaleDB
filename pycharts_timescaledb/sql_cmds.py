@@ -444,9 +444,6 @@ class MetadataInfo:
             self.table = AssetTable.from_table_name(self.table_name)
         self.timeframe = self.table.period
 
-    def __hash__(self) -> int:
-        return hash(self.table)
-
 
 def create_timeseries_metadata_view() -> sql.Composed:
     return sql.SQL(

@@ -507,6 +507,15 @@ class TimeseriesConfig:
         # Get the longest period that satisfies the above conditions
         return all_valid[-1]
 
+    def get_tables_to_refresh(self, altered_table: AssetTable) -> List[AssetTable]:
+        "Return all the tables that need to be refreshed for a given table that has been altered"
+        all_aggs = self.all_tables(altered_table.asset_class, include_raw=False)
+        # Really this is pretty inefficient and will cause more updates than needed, but I mean,
+        # Does it really matter given data will probably be inserted once a day at most? No.
+        filtered_aggs = [agg for agg in all_aggs if agg.period > altered_table.period]
+        filtered_aggs.sort(key=lambda x: x.period)  # Ensure aggregates are ordered.
+        return filtered_aggs
+
     @classmethod
     def from_table_names(
         cls,

@@ -38,6 +38,8 @@ async def main():
     alpaca_api = lwc_apis.AlpacaAPI()
     _import_alpaca(db, alpaca_api, on_conflict)
 
+    db.refresh_aggregate_metadata()
+
 
 def _update_stored_symbols(db: TimescaleDB_EXT):
     """
@@ -112,6 +114,7 @@ def _import_alpaca(
 ):
     "Select all the Stored Symbols from Alpaca and fetch & store their most recent data"
 
+    # Fetch all the Symbols that need to fetch data from Alpaca
     symbols = db.search_symbols(
         {
             "source": "Alpaca",
@@ -129,23 +132,28 @@ def _import_alpaca(
             symbol["source"],
         )
 
+        # Fetch All the Metadata for the Symbol showing what data needs to be fetched
         metadata_list = db.get_all_symbol_series_metadata(symbol["pkey"])
-        log.info("Metadata List: %s", metadata_list)
+        log.debug("Metadata List: %s", metadata_list)
 
         for metadata in metadata_list:
-            log.info("Fetching Data from '%s' forward ...", metadata.end_date)
-            t_start = time()
+            log.info(
+                "Fetching Data @ Timeframe: '%s' from '%s' Forward ...",
+                str(metadata.timeframe),
+                metadata.end_date,
+            )
 
+            # Fetch the Data from Alpaca.. At an abysmally slow rate
+            t_start = time()
             symbol_obj = Symbol.from_dict(symbol)
             tf_obj = TF.from_timedelta(metadata.timeframe)
             data = alpaca_api.get_hist_unlimited(
                 symbol_obj, tf_obj, start=metadata.end_date
             )
+            log.debug("Data Fetch Time = %s", time() - t_start)
 
-            log.info(f"Data Fetch Time = {time() - t_start}, # rows = {len(data)}")
-
+            # Pass the data off to the database to be inserted
             t_start = time()
-
             db.upsert_symbol_data(
                 symbol["pkey"],
                 metadata,
@@ -153,7 +161,7 @@ def _import_alpaca(
                 symbol["exchange"],
                 on_conflict=on_conflict,
             )
-            print(f"Data Insert Time = {time() - t_start}")
+            log.debug("Data Insert Time = %s", time() - t_start)
 
 
 if __name__ == "__main__":
