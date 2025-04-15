@@ -444,6 +444,9 @@ class MetadataInfo:
             self.table = AssetTable.from_table_name(self.table_name)
         self.timeframe = self.table.period
 
+    def __hash__(self) -> int:
+        return hash(self.table)
+
 
 def create_timeseries_metadata_view() -> sql.Composed:
     return sql.SQL(
@@ -555,6 +558,21 @@ def refresh_timeseries_metadata_view() -> sql.Composed:
     return sql.SQL("REFRESH MATERIALIZED VIEW {schema_name}.{view_name};").format(
         schema_name=sql.Identifier(Schema.SECURITY),
         view_name=sql.Identifier(AssetTbls._METADATA),
+    )
+
+
+def refresh_continuous_aggregate(
+    schema: Schema,
+    table: AssetTable,
+    start: Optional[Timestamp] = None,
+    end: Optional[Timestamp] = None,
+) -> sql.Composed:
+    return sql.SQL(
+        "CALL refresh_continuous_aggregate({full_table_name}, {start}, {end});"
+    ).format(
+        full_table_name=sql.Literal(schema + "." + table.table_name),
+        start=sql.Literal(start),
+        end=sql.Literal(end),
     )
 
 
@@ -1072,7 +1090,7 @@ class SeriesTbls(StrEnum):
     RAW_AGGREGATE = auto()
     RAW_AGG_BUFFER = auto()
     CONTINUOUS_AGG = auto()
-    CONTINOUS_TICK_AGG = auto()
+    CONTINUOUS_TICK_AGG = auto()
 
 
 class AssetTbls(StrEnum):
@@ -1132,7 +1150,7 @@ SCHEMA_MAP: SchemaMap = {
     SeriesTbls.CONTINUOUS_AGG: None,  # Table Applies to TICK, MINUTE and AGGREGATE
     SeriesTbls.RAW_AGGREGATE: None,  # Table Applies to MINUTE and AGGREGATE
     SeriesTbls.TICK: Schema.TICK_DATA,
-    SeriesTbls.CONTINOUS_TICK_AGG: Schema.TICK_DATA,
+    SeriesTbls.CONTINUOUS_TICK_AGG: Schema.TICK_DATA,
     # ANY: SCHEMA.USER_DATA
 }
 
@@ -1146,7 +1164,7 @@ OPERATION_MAP: OperationMap = {
         SeriesTbls.CONTINUOUS_AGG: create_continuous_aggrigate,
         SeriesTbls.RAW_AGGREGATE: create_raw_aggregate_table,
         SeriesTbls.RAW_AGG_BUFFER: create_raw_agg_buffer,
-        SeriesTbls.CONTINOUS_TICK_AGG: create_continuous_tick_aggregate,
+        SeriesTbls.CONTINUOUS_TICK_AGG: create_continuous_tick_aggregate,
         AssetTbls._SYMBOL_SEARCH_FUNCS: create_search_functions,
         AssetTbls.SYMBOLS: create_symbol_table,
         AssetTbls.SYMBOLS_BUFFER: create_symbol_buffer,
@@ -1202,7 +1220,8 @@ OPERATION_MAP: OperationMap = {
     },
     Operation.REFRESH: {
         AssetTbls._METADATA: refresh_timeseries_metadata_view,
-        SeriesTbls.CONTINUOUS_AGG: refresh_timeseries_metadata_view,
+        SeriesTbls.CONTINUOUS_AGG: refresh_continuous_aggregate,
+        SeriesTbls.CONTINUOUS_TICK_AGG: refresh_continuous_aggregate,
     },
 }
 

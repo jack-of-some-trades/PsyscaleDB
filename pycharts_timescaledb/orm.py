@@ -518,10 +518,12 @@ class TimeseriesConfig:
         Origin Timestamps must be given in a dictionary of
         [asset_class:str, (rth_origin, eth_origin, htf_origin)]
         """
-        log.debug(
-            "Filtered out table names %s when reconstructing TimeseriesConfig from Database table names.",
-            [name for name in names if name.startswith("_")],
-        )
+        filtered_names = [name for name in names if name.startswith("_")]
+        if len(filtered_names) > 0:
+            log.debug(
+                "Filtered out table names %s when reconstructing TimeseriesConfig from Database table names.",
+                filtered_names,
+            )
 
         tables = []
         for name in names:

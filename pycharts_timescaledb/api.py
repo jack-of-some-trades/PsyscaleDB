@@ -160,25 +160,44 @@ class TimeScaleDB:
             return rsp[0][0] == 1
         return False
 
+    # region -- Cursor Overloading ---
     @overload
     @contextmanager
     def _cursor(
-        self, dict_cursor: Literal[True], *, pipeline: bool = False
+        self,
+        dict_cursor: Literal[True],
+        *,
+        pipeline: bool = False,
+        auto_commit: bool = False,
     ) -> Iterator[DictCursor]: ...
     @overload
     @contextmanager
     def _cursor(
-        self, dict_cursor: Literal[False] = False, *, pipeline: bool = False
+        self,
+        dict_cursor: Literal[False] = False,
+        *,
+        pipeline: bool = False,
+        auto_commit: bool = False,
     ) -> Iterator[TupleCursor]: ...
     @overload
     @contextmanager
     def _cursor(
-        self, dict_cursor: bool = False, *, pipeline: bool = False
+        self,
+        dict_cursor: bool = False,
+        *,
+        pipeline: bool = False,
+        auto_commit: bool = False,
     ) -> Iterator[TupleCursor]: ...
+
+    # endregion
 
     @contextmanager
     def _cursor(
-        self, dict_cursor: bool = False, *, pipeline: bool = False
+        self,
+        dict_cursor: bool = False,
+        *,
+        pipeline: bool = False,
+        auto_commit: bool = False,
     ) -> Iterator[TupleCursor] | Iterator[DictCursor]:
         """
         Returns a cursor to execute commands in a database.
@@ -186,12 +205,19 @@ class TimeScaleDB:
         Default return product is a list of tuples. Returns can be made into lists of dictionaries
         by settign dict_cursor=True. This is less performant for large datasets though.
 
+        Auto_Commit Allows for commands to be done outside of a transaction block which may be
+        required for some commands.
+
         Pipeline is a feature of a cursor, that when set to True, avoids waiting for responses
         before executing new commands. In theory that should increase performance. In practice
         it seemed to only reduce performance.
         """
         cursor_factory = pg_rows.dict_row if dict_cursor else pg_rows.tuple_row
         conn: pg.Connection = self.pool.getconn()
+
+        if auto_commit:
+            conn.set_autocommit(True)
+
         try:
             if pipeline:
                 with conn.pipeline(), conn.cursor(row_factory=cursor_factory) as cursor:
@@ -203,7 +229,11 @@ class TimeScaleDB:
             conn.rollback()  # Reset Database, InFailedSqlTransaction Err thrown if not reset
             log.error("Caught Database Error: \n '%s' \n...Rolling back changes.", e)
         finally:
-            conn.commit()
+            if auto_commit:
+                conn.set_autocommit(False)
+            else:
+                conn.commit()
+
             self.pool.putconn(conn)
 
     @overload
@@ -388,13 +418,14 @@ class TimeScaleDB:
                 cursor.execute(self[Op.CREATE, AssetTbls._SYMBOL_SEARCH_FUNCS]())
                 cursor.execute(self[Op.CREATE, AssetTbls.SYMBOLS]())
 
-            if AssetTbls._METADATA not in tables:
-                # Init Symbol Data Range Metadata table & support function
-                log.info(
-                    "Creating Table '%s'.'%s'", Schema.SECURITY, AssetTbls._METADATA
-                )
-                cursor.execute(self[Op.CREATE, AssetTbls._METADATA_FUNC]())
-                cursor.execute(self[Op.CREATE, AssetTbls._METADATA]())
+            # Init Symbol Data Range Metadata table & support function
+            log.debug(
+                "Ensuring Table '%s'.'%s' Exists",
+                Schema.SECURITY,
+                AssetTbls._METADATA,
+            )
+            cursor.execute(self[Op.CREATE, AssetTbls._METADATA_FUNC]())
+            cursor.execute(self[Op.CREATE, AssetTbls._METADATA]())
 
     # endregion
 

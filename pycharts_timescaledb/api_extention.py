@@ -337,6 +337,154 @@ class TimescaleDB_EXT(TimeScaleDB):
 
         log.info("Symbol Data Upsert Status Message: %s", status)
 
+    def refresh_aggregate_metadata(self):
+        """
+        Refresh Continuous Aggregates & the Timeseries Metadata Table based on upserts made.
+        Designed to be called after all known data insertions have been made.
+
+        Edits made using 'upsert_symbol_data()' are tracked. This includes individual tables and the
+        respective time-ranges edited. This method uses that stored information to update only what
+        needs to be updated.
+
+        CAVEAT: This only works so long as this is the same class instance that made the updates
+        in the first place. If that instance is deleted before calling this function
+        refresh_all_aggregates_and_metadata() must be invoked manually.
+        """
+        if not hasattr(self, "_altered_tables"):
+            log.info("No Series Data has been inserted, Skipping Metadata Refresh.")
+            return
+
+        with self._cursor(auto_commit=True) as cursor:
+
+            # Loop Through Schemas
+            for schema, mdata_dict in self._altered_tables_mdata.items():
+                log.info(
+                    " ---- ---- Refreshing Timeseries Schema : %s  ---- ---- ", schema
+                )
+
+                # Loop Through Edited Tables
+                for table_name, mdata in mdata_dict.items():
+                    log.info(
+                        " --- Refreshing Tables Associated with Table : %s ---- ",
+                        table_name,
+                    )
+                    assert mdata.table  # Ensuring mata.Table is defined by post_init
+                    cont_aggs = self.table_config[Schema(schema)].get_tables_to_refresh(
+                        mdata.table
+                    )
+                    # Add some buffer dates so entire time chucks are covered
+                    # (Times Chucks will not update unless they are completely included )
+                    mdata.start_date -= Timedelta("4W")
+                    mdata.end_date += Timedelta("4W")
+
+                    for table in cont_aggs:
+                        if table.raw:
+                            continue
+
+                        log.info(
+                            "Refreshing Continuous Aggregate : %s ", table.table_name
+                        )
+                        cursor.execute(
+                            self[Op.REFRESH, SeriesTbls.CONTINUOUS_AGG](
+                                schema, table, mdata.start_date, mdata.end_date
+                            )
+                        )
+
+            # Refresh the metadata View to Reflect Updates
+            log.info(
+                "---- ---- Refreshing 'Security._Metadata' Materialized View ---- ----"
+            )
+            cursor.execute(self[Op.REFRESH, AssetTbls._METADATA]())
+
+        # Reset the mdata memory just in case
+        del self._altered_tables
+        del self._altered_tables_mdata
+
+    def refresh_all_aggregate_metadata(self):
+        """
+        Refresh All Continuous Aggregates.
+        Input Options will be presented to completely or partially automate this process
+        """
+        print(
+            """
+            Attempting to refresh *all* Continuous Aggregates over *All time*
+            This can be an extremely slow process.
+              
+            The following are options on how to proceed :
+              - 'all' - Do everything
+              - 'abort' - Do Nothing
+              - 'none' - Only refresh the security._metadata view
+              - 'schema' - Ask to refresh per schema
+              - 'asset' - Ask to refresh entire asset_classes
+              - 'table' - ask to refresh individual tables
+
+            When choosing 'asset' or 'table' the higher level filters will also be available.
+        """
+        )
+
+        for _ in range(3):
+            method = input("'all' / 'none' / 'schema' / 'asset' / 'table' / 'abort' : ")
+            if method == "abort":
+                return
+            if method.lower() in {"all", "none", "schema", "asset", "table"}:
+                break
+            print("Unknown input")
+
+        if method.lower() not in {"all", "none", "schema", "asset", "table"}:
+            print("Learn to type.")
+            return
+
+        with self._cursor(auto_commit=True) as cursor:
+            if method != "none":
+                try:
+                    self._manual_refresh_loop(cursor, method)
+                except AssertionError:
+                    pass
+
+            log.info(
+                "---- ---- Refreshing 'Security._Metadata' Materialized View ---- ----"
+            )
+            cursor.execute(self[Op.REFRESH, AssetTbls._METADATA]())
+
+    def _manual_refresh_loop(self, cursor: TupleCursor, method: str):
+        "Inner function that can return but still allow the cursor to refresh the MetaData Table."
+        for schema, config in self.table_config.items():
+            if method in {"schema", "table", "asset"}:
+                rsp = input(f"Refresh schema {schema}? : y/abort/[N] : ")
+                if rsp.lower() == "abort":
+                    assert False
+                if rsp.lower() != "y":
+                    continue
+
+            log.info("---- ---- Refreshing Schema : %s ---- ---- ", schema)
+
+            all_aggregates = []
+
+            for asset_class in config.asset_classes:
+                if method in {"table", "asset"}:
+                    rsp = input(f"Refresh asset_class {asset_class}? : y/abort/[N] : ")
+                    if rsp.lower() == "abort":
+                        assert False
+                    if rsp.lower() != "y":
+                        continue
+
+                aggs = config.all_tables(asset_class, include_raw=False)
+                aggs.sort(key=lambda x: x.period)
+                all_aggregates.extend(aggs)
+
+            for table in all_aggregates:
+                if method == "table":
+                    rsp = input(f"Refresh table {table}? : y/abort/[N] : ")
+                    if rsp.lower() == "abort":
+                        assert False
+                    if rsp.lower() != "y":
+                        continue
+
+                log.info("Refreshing Continuous Aggregate : %s ", table)
+                cursor.execute(
+                    self[Op.REFRESH, SeriesTbls.CONTINUOUS_AGG](schema, table)
+                )
+
     # endregion
 
     # region ---- ---- ---- Private Timeseries Sub-routines ---- ---- ----
@@ -420,7 +568,7 @@ class TimescaleDB_EXT(TimeScaleDB):
                 log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
                 ref_table = config.get_aggregation_source(tbl)
                 tbl_type = (
-                    SeriesTbls.CONTINOUS_TICK_AGG
+                    SeriesTbls.CONTINUOUS_TICK_AGG
                     if ref_table.period == Timedelta(0)
                     else SeriesTbls.CONTINUOUS_AGG
                 )
@@ -519,7 +667,7 @@ class TimescaleDB_EXT(TimeScaleDB):
                 log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
                 ref_table = config.get_aggregation_source(tbl)
                 tbl_type = (
-                    SeriesTbls.CONTINOUS_TICK_AGG
+                    SeriesTbls.CONTINUOUS_TICK_AGG
                     if ref_table.period == Timedelta(0)
                     else SeriesTbls.CONTINUOUS_AGG
                 )
