@@ -5,7 +5,13 @@ from typing import Literal, Optional, Tuple
 
 from pandas import DataFrame, Series, Timedelta, Timestamp
 
-from .orm import TimeseriesConfig
+# pylint: disable-next=import-error
+from lightweight_pycharts.dataframe_ext import (  # type:ignore
+    Series_DF,
+    enable_market_calendars,
+)
+
+from .orm import AssetTable, TimeseriesConfig
 from .sql_cmds import (
     Generic,
     MetadataInfo,
@@ -17,6 +23,8 @@ from .sql_cmds import (
 
 from .api import TimeScaleDB, TupleCursor
 
+# Enable market calendars so 'rth' can be determined when inserting data
+enable_market_calendars()
 log = logging.getLogger("pycharts-timescaledb")
 
 # pylint: disable='invalid-name','protected-access'
@@ -90,7 +98,8 @@ class TimescaleDB_EXT(TimeScaleDB):
                 -- name:Str - Full String Name of the Symbol
                 -- exchange:str - Abbrv. Exchange Name for the symbol
                 -- asset_class:str - Type of asset, This must match the Timeseries Config
-                    asset_classes otherwise data for this symbol cannot be inserted into the database.
+                    asset_classes otherwise data for this symbol cannot be inserted into the
+                    database.
 
             - Any Extra Columns will be packaged into JSON and dumped into an 'attrs' Dictionary.
             To prevent bloat, drop all columns that will not be used.
@@ -168,7 +177,7 @@ class TimescaleDB_EXT(TimeScaleDB):
 
     # region ---- ---- ---- Public Timeseries Sub-routines ---- ---- ----
 
-    def get_symbol_series_updates(self, pkey: int) -> list[MetadataInfo]:
+    def get_all_symbol_series_metadata(self, pkey: int) -> list[MetadataInfo]:
         """
         Augmented call to TimesacleDB.symbol_series_metadata() to ensure MetadataInfo dataclasses
         are returned for tables if the Schema's TableConfig says there should be data for the symbol
@@ -223,6 +232,110 @@ class TimescaleDB_EXT(TimeScaleDB):
             ) from e
 
         return metadata
+
+    def upsert_symbol_data(
+        self,
+        pkey: int,
+        metadata: MetadataInfo,
+        data: DataFrame,
+        exchange: Optional[str] = None,
+        *,
+        on_conflict: Literal["update", "error"] = "error",
+    ):
+        """
+        Insert or Upsert symbol data to the database.
+
+        -- PARAMS --
+        - pkey : int. Primary Key of the symbol to insert
+        - metadata: MetadataInfo Object
+            - Contains the schema_name & table_name to insert the data into, can be retrieved from
+            calling 'get_all_symbol_series_metadata' or 'symbol_series_metadata'
+        - Data: Dataframe.
+            - Should contain all series data needed to be inserted. Multiple names will be
+            recognized for each given series parameter.
+            - i.e. time/datetime/date/dt ... etc will all be recognized as the timestamp column.
+        - exchange : str | None
+            - Exchange that the Asset is traded on. This will be passed to pandas_market_calendars
+            so the RTH/ETH session of each datapoint can be determined and stored as necessary.
+            - None can be passed for 24/7 Exchanges such as Crypto and Forex
+        - on_conflict : Literal["update", "error"] = "error"
+            - Action to take when a UNIQUE conflict occurs. Erroring allows for faster insertion
+            if it can be ensured that given data will be unique
+        """
+        table = (
+            metadata.table
+            if metadata.table is not None
+            else AssetTable.from_table_name(metadata.table_name)
+        )
+
+        # region ---- Check that the data matches name and 'NOT NULL' expectations
+        series_df = Series_DF(data, exchange)
+
+        try:
+            if table.period != Timedelta(0):
+                # Aggregate Specific Expectations
+                assert table.period == series_df.timedelta
+                assert "close" in series_df.columns
+                assert not series_df.df["close"].isna().any()
+            else:
+                # Tick Specific Expectations
+                assert "value" in series_df.columns
+                assert not series_df.df["value"].isna().any()
+                series_df.df.rename(columns={"value": "price"}, inplace=True)
+
+            # Regardless if Tick or aggregate, check the 'rth' to be NOT NULL when needed.
+            if table.ext and table.rth is None:
+                assert "rth" in series_df.columns
+                if (nans := series_df.df["rth"].isna()).any():
+                    drops = series_df.df[nans]
+                    log.warning(
+                        "Edge-case mark session error. Dropping %s data-points: %s.",
+                        len(drops),
+                        drops,
+                    )
+                    series_df.df = series_df.df[~nans]
+
+            # Renaming is the result of name differences between the Timescale Database
+            # and what Lightweight-charts needs as input.
+            series_df.df.reset_index(names="dt", inplace=True)
+            assert "dt" in series_df.columns
+            assert not series_df.df["dt"].isna().any()
+        except AssertionError as e:
+            raise ValueError(
+                "Cannot insert symbol data into TimescaleDB. Dataframe is not formatted correctly"
+            ) from e
+
+        # endregion
+
+        # Setup and copy data into database
+        buffer_tbl_type = (
+            SeriesTbls.TICK_BUFFER
+            if table.period == Timedelta(0)
+            else SeriesTbls.RAW_AGG_BUFFER
+        )
+
+        data_fmt = series_df.df
+
+        with self._cursor() as cursor:
+            # Create & Inject the Data into a Temporary Table
+            cursor.execute(self[Op.CREATE, buffer_tbl_type](table))
+            copy_cmd = self[Op.COPY, buffer_tbl_type](
+                # Sends the COPY Cmd & the order of the Columns of the Dataframe
+                [str(c) for c in data_fmt.columns]
+            )
+            with cursor.copy(copy_cmd) as copy:
+                for row in data_fmt.itertuples(index=False, name=None):
+                    # Writes each row as a Tuple that matches the Dataframe Column Order
+                    copy.write_row(row)
+
+            # Merge the Temp Table By inserting / upserting from the Temporary Table
+            _op = Op.UPSERT if on_conflict == "update" else Op.INSERT
+            cursor.execute(
+                self[_op, buffer_tbl_type](metadata.schema_name, table, pkey)
+            )
+            status = cursor.statusmessage
+
+        log.info("Symbol Data Upsert Status Message: %s", status)
 
     # endregion
 

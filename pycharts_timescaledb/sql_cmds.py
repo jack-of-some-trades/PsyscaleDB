@@ -421,7 +421,12 @@ METADATA_ARGS = set(v for v in get_args(MetadataArgs))
 
 @dataclass
 class MetadataInfo:
-    "Construct for returning MetaData Info"
+    """
+    Construct for returning symbol metadata.
+
+    Dataclass contains the earliest and latest recorded datapoint (start_date & end_date
+    respectfully) for a given data table (schema_name & table_name)
+    """
 
     table_name: str
     schema_name: str | StrEnum
@@ -688,7 +693,7 @@ def create_tick_table(schema: str, table: AssetTable) -> sql.Composed:
         CREATE TABLE {schema_name}.{table_name} (
             pkey INTEGER NOT NULL,
             dt TIMESTAMPTZ NOT NULL,"""
-        + (" rth BOOLEAN not NULL," if table.ext and table.rth is None else "")
+        + (" rth SMALLINT not NULL," if table.ext and table.rth is None else "")
         + """
             price DOUBLE PRECISION NOT NULL,
             volume DOUBLE PRECISION, 
@@ -731,7 +736,7 @@ def create_continuous_tick_aggregate(
         FROM {schema_name}.{ref_table_name}"""
         # Where clause handles the case when going from a table with an rth column to no rth column
         + (
-            " WHERE rth = TRUE "
+            " WHERE rth = 0 "
             if ref_table.rth is None and table.ext and table.rth
             else ""
         )
@@ -788,10 +793,10 @@ def create_raw_tick_buffer(table: AssetTable) -> sql.Composed:
         """
         CREATE TEMP TABLE _tick_buffer (
             dt TIMESTAMPTZ NOT NULL,"""
-        + (" rth BOOLEAN not NULL," if table.ext and table.rth is None else "")
+        + (" rth SMALLINT not NULL," if table.ext and table.rth is None else "")
         + """
             price DOUBLE PRECISION NOT NULL,
-            volume DOUBLE PRECISION,
+            volume DOUBLE PRECISION DEFAULT NULL
         ) ON COMMIT DROP;
     """
     ).format()
@@ -814,7 +819,7 @@ def insert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Compos
         ).format(
             schema_name=sql.Identifier(schema),
             table_name=sql.Identifier(str(table)),
-            source=sql.Literal(pkey),
+            pkey=sql.Literal(pkey),
         )
     else:
         return sql.SQL(
@@ -825,7 +830,7 @@ def insert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Compos
         ).format(
             schema_name=sql.Identifier(schema),
             table_name=sql.Identifier(str(table)),
-            source=sql.Literal(pkey),
+            pkey=sql.Literal(pkey),
         )
 
 
@@ -842,7 +847,7 @@ def upsert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Compos
         ).format(
             schema_name=sql.Identifier(schema),
             table_name=sql.Identifier(str(table)),
-            source=sql.Literal(pkey),
+            pkey=sql.Literal(pkey),
         )
     else:
         return sql.SQL(
@@ -855,7 +860,7 @@ def upsert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Compos
         ).format(
             schema_name=sql.Identifier(schema),
             table_name=sql.Identifier(str(table)),
-            source=sql.Literal(pkey),
+            pkey=sql.Literal(pkey),
         )
 
 
@@ -872,12 +877,12 @@ def create_raw_aggregate_table(schema: str, table: AssetTable) -> sql.Composed:
         CREATE TABLE {schema_name}.{table_name} (
             pkey INTEGER NOT NULL,
             dt TIMESTAMPTZ NOT NULL,"""
-        + (" rth BOOLEAN NOT NULL," if table.ext and table.rth is None else "")
+        + (" rth SMALLINT NOT NULL," if table.ext and table.rth is None else "")
         + """
             close DOUBLE PRECISION NOT NULL,
-            open DOUBLE PRECISION NOT NULL,
-            high DOUBLE PRECISION NOT NULL,
-            low DOUBLE PRECISION NOT NULL,
+            open DOUBLE PRECISION,
+            high DOUBLE PRECISION,
+            low DOUBLE PRECISION,
             volume DOUBLE PRECISION,
             vwap DOUBLE PRECISION,
             ticks INTEGER,
@@ -919,7 +924,7 @@ def create_continuous_aggrigate(
         FROM {schema_name}.{ref_table_name}"""
         # Where clause handles the case when going from a table with an rth column to no rth column
         + (
-            " WHERE rth = TRUE "
+            " WHERE rth = 0 "
             if ref_table.rth is None and table.ext and table.rth
             else ""
         )
@@ -943,15 +948,15 @@ def create_raw_agg_buffer(table: AssetTable) -> sql.Composed:
         """
         CREATE TEMP TABLE _aggregate_buffer (
             dt TIMESTAMPTZ NOT NULL,"""
-        + (" rth BOOLEAN NOT NULL," if table.ext and table.rth is None else "")
+        + (" rth SMALLINT NOT NULL," if table.ext and table.rth is None else "")
         + """
             close DOUBLE PRECISION NOT NULL,
-            open DOUBLE PRECISION NOT NULL,
-            high DOUBLE PRECISION NOT NULL,
-            low DOUBLE PRECISION NOT NULL,
-            volume DOUBLE PRECISION,
-            vwap DOUBLE PRECISION,
-            ticks INTEGER,
+            open DOUBLE PRECISION DEFAULT NULL,
+            high DOUBLE PRECISION DEFAULT NULL,
+            low DOUBLE PRECISION DEFAULT NULL,
+            volume DOUBLE PRECISION DEFAULT NULL,
+            vwap DOUBLE PRECISION DEFAULT NULL,
+            ticks INTEGER DEFAULT NULL
         ) ON COMMIT DROP;
     """
     ).format()
@@ -973,7 +978,7 @@ def insert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.C
         ).format(
             schema_name=sql.Identifier(schema),
             table_name=sql.Identifier(str(table)),
-            source=sql.Literal(pkey),
+            pkey=sql.Literal(pkey),
         )
     else:
         return sql.SQL(
@@ -984,7 +989,7 @@ def insert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.C
         ).format(
             schema_name=sql.Identifier(schema),
             table_name=sql.Identifier(str(table)),
-            source=sql.Literal(pkey),
+            pkey=sql.Literal(pkey),
         )
 
 
@@ -1008,7 +1013,7 @@ def upsert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.C
         ).format(
             schema_name=sql.Identifier(schema),
             table_name=sql.Identifier(str(table)),
-            source=sql.Literal(pkey),
+            pkey=sql.Literal(pkey),
         )
     else:
         return sql.SQL(
@@ -1027,7 +1032,7 @@ def upsert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.C
         ).format(
             schema_name=sql.Identifier(schema),
             table_name=sql.Identifier(str(table)),
-            source=sql.Literal(pkey),
+            pkey=sql.Literal(pkey),
         )
 
 
