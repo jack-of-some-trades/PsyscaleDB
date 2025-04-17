@@ -1,5 +1,4 @@
-alpaca-py>=0.39.1
-lightweight-pycharts
 pandas>=2.2.2
+pandas-market-calendars>=5.0.0
 psycopg[binary,pool]>=3.2.6
 python-dotenv>=1.0.1

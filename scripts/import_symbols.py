@@ -5,10 +5,13 @@ import asyncio
 import logging
 from typing import Literal
 
-import lightweight_pycharts.broker_apis as lwc_apis  # type:ignore -- while using editable install
+import dotenv
 
 import pycharts_timescaledb as tsdb
 from pycharts_timescaledb.api_extention import TimescaleDB_EXT
+from broker_apis.alpaca_api import AlpacaAPI
+
+dotenv.load_dotenv(dotenv.find_dotenv())
 
 tsdb.set_timescale_db_log_level("INFO")
 log = logging.getLogger("pycharts-timescaledb")
@@ -18,11 +21,10 @@ async def main():
     on_conflict: Literal["ignore", "update"] = "update"
     db = TimescaleDB_EXT()
 
-    alpaca_api = lwc_apis.AlpacaAPI()
-    _import_alpaca(db, alpaca_api, on_conflict)
+    _import_alpaca(db, on_conflict)
 
 
-def _import_alpaca(db: TimescaleDB_EXT, api, on_conflict: Literal["ignore", "update"]):
+def _import_alpaca(db: TimescaleDB_EXT, on_conflict: Literal["ignore", "update"]):
     """
     Inserts securities from alpaca separating them into asset_classes US_Stock, US_Fund, & Crypto
     Updates are not dynamic, they're forced when a Symbol & Exchange pair are already in the table.
@@ -32,16 +34,18 @@ def _import_alpaca(db: TimescaleDB_EXT, api, on_conflict: Literal["ignore", "upd
     to be updated. This could be fixed by ensuring a unique ID or CUSID that is located within the
     attrs column for Alpaca Symbols.
     """
-    filtered_assets = api.assets[
-        api.assets["tradable"].to_numpy()
-        & (api.assets["status"] == "active").to_numpy()
+    alpaca_api = AlpacaAPI()
+
+    filtered_assets = alpaca_api.assets[
+        alpaca_api.assets["tradable"].to_numpy()
+        & (alpaca_api.assets["status"] == "active").to_numpy()
     ].copy()
 
-    extra_cols = set(api.assets.columns) - {
-        "sec_type",
+    extra_cols = set(alpaca_api.assets.columns) - {
+        "class",
         "cusip",  # Standardized SEC Id of the symbol
         "name",
-        "ticker",
+        "symbol",
         "exchange",
         "shortable",
         "marginable",
@@ -49,12 +53,11 @@ def _import_alpaca(db: TimescaleDB_EXT, api, on_conflict: Literal["ignore", "upd
         "fractionable",
     }
     filtered_assets.drop(columns=extra_cols, inplace=True)
-    filtered_assets.rename(columns={"ticker": "symbol"}, inplace=True)
     filtered_assets.reset_index(inplace=True)
 
     _etfs = filtered_assets["name"].str.contains("ETF", case=False).to_numpy()
-    _cryptos = (filtered_assets["sec_type"] == "crypto").to_numpy()
-    filtered_assets.drop(columns="sec_type", inplace=True)
+    _cryptos = (filtered_assets["class"] == "crypto").to_numpy()
+    filtered_assets.drop(columns="class", inplace=True)
 
     filtered_assets.loc[:, "asset_class"] = None
     filtered_assets.loc[_etfs, "asset_class"] = "us_fund"

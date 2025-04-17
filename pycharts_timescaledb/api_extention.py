@@ -5,12 +5,7 @@ from typing import Literal, Optional, Tuple
 
 from pandas import DataFrame, Series, Timedelta, Timestamp
 
-# pylint: disable-next=import-error
-from lightweight_pycharts.dataframe_ext import (  # type:ignore
-    Series_DF,
-    enable_market_calendars,
-)
-
+from .series_df import Series_DF
 from .orm import AssetTable, TimeseriesConfig
 from .sql_cmds import (
     Generic,
@@ -23,8 +18,6 @@ from .sql_cmds import (
 
 from .api import TimeScaleDB, TupleCursor
 
-# Enable market calendars so 'rth' can be determined when inserting data
-enable_market_calendars()
 log = logging.getLogger("pycharts-timescaledb")
 
 # pylint: disable='invalid-name','protected-access'
@@ -255,7 +248,7 @@ class TimescaleDB_EXT(TimeScaleDB):
         - exchange : str | None
             - Exchange that the Asset is traded on. This will be passed to pandas_market_calendars
             so the RTH/ETH session of each datapoint can be determined and stored as necessary.
-            - None can be passed for 24/7 Exchanges such as Crypto and Forex
+            - None can be passed for 24/7 Exchanges such as Crypto. (Note: Forex would require 24/5 be passed)
         - on_conflict : Literal["update", "error"] = "error"
             - Action to take when a UNIQUE conflict occurs. Erroring allows for faster insertion
             if it can be ensured that given data will be unique
@@ -277,9 +270,8 @@ class TimescaleDB_EXT(TimeScaleDB):
                 assert not series_df.df["close"].isna().any()
             else:
                 # Tick Specific Expectations
-                assert "value" in series_df.columns
-                assert not series_df.df["value"].isna().any()
-                series_df.df.rename(columns={"value": "price"}, inplace=True)
+                assert "price" in series_df.columns
+                assert not series_df.df["price"].isna().any()
 
             # Regardless if Tick or aggregate, check the 'rth' to be NOT NULL when needed.
             if table.ext and table.rth is None:
@@ -293,9 +285,6 @@ class TimescaleDB_EXT(TimeScaleDB):
                     )
                     series_df.df = series_df.df[~nans]
 
-            # Renaming is the result of name differences between the Timescale Database
-            # and what Lightweight-charts needs as input.
-            series_df.df.reset_index(names="dt", inplace=True)
             assert "dt" in series_df.columns
             assert not series_df.df["dt"].isna().any()
         except AssertionError as e:

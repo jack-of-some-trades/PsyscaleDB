@@ -7,17 +7,18 @@ import logging
 from time import time
 from typing import Literal
 
-from pandas import DataFrame
-
-# pylint: disable=import-error, logging-fstring-interpolation
-import lightweight_pycharts.broker_apis as lwc_apis  # type: ignore
-from lightweight_pycharts.orm.types import Symbol, TF  # type: ignore
+import dotenv
+import pandas as pd
 
 import pycharts_timescaledb as tsdb
 from pycharts_timescaledb.api_extention import TimescaleDB_EXT
+from broker_apis.alpaca_api import AlpacaAPI
 
-tsdb.set_timescale_db_log_level("DEBUG")
+dotenv.load_dotenv(dotenv.find_dotenv())
+
+tsdb.set_timescale_db_log_level("INFO")
 log = logging.getLogger("pycharts-timescaledb")
+
 
 # Used to manually set symbols to download data, Only needs to be called once per symbol
 SYMBOLS_TO_IMPORT = [
@@ -35,8 +36,7 @@ async def main():
 
     _update_stored_symbols(db)
 
-    alpaca_api = lwc_apis.AlpacaAPI()
-    _import_alpaca(db, alpaca_api, on_conflict)
+    _import_alpaca(db, on_conflict)
 
     db.refresh_aggregate_metadata()
 
@@ -88,7 +88,7 @@ def _update_stored_symbols(db: TimescaleDB_EXT):
                 "The Following Filter Returned %s Symbols: \nFilter: %s \nSymbols:\n%s",
                 len(symbols),
                 dumps(_filter, indent=2),
-                DataFrame(symbols),
+                pd.DataFrame(symbols),
             )
             rsp = input(
                 f"Set All Symbols to Import {store} Data or Step through Each? all/skip/[each] : "
@@ -114,10 +114,9 @@ def _update_stored_symbols(db: TimescaleDB_EXT):
                     log.info("Skipping Symbol")
 
 
-def _import_alpaca(
-    db: TimescaleDB_EXT, alpaca_api, on_conflict: Literal["error", "update"]
-):
+def _import_alpaca(db: TimescaleDB_EXT, on_conflict: Literal["error", "update"]):
     "Select all the Stored Symbols from Alpaca and fetch & store their most recent data"
+    alpaca_api = AlpacaAPI()
 
     # Fetch all the Symbols that need to fetch data from Alpaca
     symbols = db.search_symbols(
@@ -150,12 +149,17 @@ def _import_alpaca(
 
             # Fetch the Data from Alpaca.. At an abysmally slow rate
             t_start = time()
-            symbol_obj = Symbol.from_dict(symbol)
-            tf_obj = TF.from_timedelta(metadata.timeframe)
-            data = alpaca_api.get_hist_unlimited(
-                symbol_obj, tf_obj, start=metadata.end_date
+            asset_class = "crypto" if symbol["asset_class"] == "crypto" else "us_equity"
+            data = alpaca_api.get_hist(
+                symbol["symbol"],
+                asset_class,
+                metadata.timeframe,
+                start=metadata.end_date,
             )
             log.debug("Data Fetch Time = %s", time() - t_start)
+            if data is None:
+                log.error("Could not retrieve any data for symbol : %s", symbol)
+                continue
 
             # Pass the data off to the database to be inserted
             t_start = time()

@@ -4,6 +4,7 @@ pycharts_timescaledb/__init__.py
 pycharts_timescaledb/api.py
 pycharts_timescaledb/api_extention.py
 pycharts_timescaledb/orm.py
+pycharts_timescaledb/series_df.py
 pycharts_timescaledb/sql_cmds.py
 pycharts_timescaledb.egg-info/PKG-INFO
 pycharts_timescaledb.egg-info/SOURCES.txt
