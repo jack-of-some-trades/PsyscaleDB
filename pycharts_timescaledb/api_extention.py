@@ -267,7 +267,7 @@ class TimescaleDB_EXT(TimeScaleDB):
         )
 
         # region ---- Check that the data matches name and 'NOT NULL' expectations
-        series_df = Series_DF(data, exchange)
+        series_df = Series_DF(data, exchange)  # Rename cols & Populate 'rth'
 
         try:
             if table.period != Timedelta(0):
@@ -349,9 +349,8 @@ class TimescaleDB_EXT(TimeScaleDB):
             cursor.execute(
                 self[_op, buffer_tbl_type](metadata.schema_name, table, pkey)
             )
-            status = cursor.statusmessage
+            log.info("Symbol Data Upsert Status Message: %s", cursor.statusmessage)
 
-        log.info("Symbol Data Upsert Status Message: %s", status)
         self._update_series_data_edit_record(metadata, data_fmt, table)
         # endregion
 
@@ -621,9 +620,9 @@ class TimescaleDB_EXT(TimeScaleDB):
                 continue
 
             _del = input(
-                f"Detected Differences with Config of Asset_class: '{schema}'.'{asset}'\n"
-                "This requires all Calculated Aggregates to be removed and recalculated.\n"
-                "However, All Inserted data *will* be retained.\n"
+                f"Aggregated Data Table Changes exist for Asset_class: '{schema}'.'{asset}'\n"
+                "Updating these changes requires all Calculated Aggregates to be removed and "
+                "recalculated.\n-- All Inserted data *will* be retained --\n"
                 "Update Config? y/[N] : "
             )
             if not (_del == "y" or _del == "Y"):
@@ -652,8 +651,8 @@ class TimescaleDB_EXT(TimeScaleDB):
             # Remove Unwanted Inserted Table Data
             for tbl in [tbl for tbl in removals if tbl.raw]:
                 _del = input(
-                    f"Table '{tbl}' exists in current database, but not in the new config.\n"
-                    "This table contains inserted raw data with an aggregation period of "
+                    f"Inserted Data Table '{tbl}' exists in current database, but not in the new "
+                    "config.\nThis table contains inserted raw data with an aggregation period of "
                     f"{tbl.period}. \nDelete it? y/[N] : "
                 )
                 # Technically this introduces a bug but it's too much an edge case to care atm.

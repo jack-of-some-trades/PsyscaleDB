@@ -25,6 +25,7 @@ def main():
 # STD_ASSET_LIST = []
 STD_ASSET_LIST = ["us_fund", "us_stock", "crypto"]
 
+# Minute Schema Imports Minute Data and Aggreagtes higher Timeframe information
 STD_MINUTE_CONFIG = tsdb.TimeseriesConfig(
     STD_ASSET_LIST,
     rth_origins={
@@ -49,6 +50,7 @@ STD_TICK_PERIODS = [
 ]
 STD_TICK_PERIODS.extend(tsdb.DEFAULT_AGGREGATES)
 
+# Tick Schema imports Tick Data and Aggregates HTF Data
 STD_TICK_CONFIG = tsdb.TimeseriesConfig(
     STD_ASSET_LIST,
     rth_origins={
@@ -64,7 +66,8 @@ STD_TICK_CONFIG = tsdb.TimeseriesConfig(
     inserted_aggregate_periods={"default": []},
 )
 
-
+# Aggregate Schema only imports aggregate data. Useful when Higher Timeframe
+# Data extends further back in time than lower timeframe data.
 STD_AGGREGATE_CONFIG = tsdb.TimeseriesConfig(
     STD_ASSET_LIST,
     rth_origins={
@@ -76,7 +79,7 @@ STD_AGGREGATE_CONFIG = tsdb.TimeseriesConfig(
         "us_fund": Timestamp("2000/01/03 04:00", tz="EST"),
     },
     prioritize_rth={"us_stock": True, "us_fund": True},
-    aggregate_periods={"default": tsdb.DEFAULT_AGGREGATES},
+    aggregate_periods={"default": []},
     inserted_aggregate_periods={"default": [Timedelta("1m")] + tsdb.DEFAULT_AGGREGATES},
 )
 

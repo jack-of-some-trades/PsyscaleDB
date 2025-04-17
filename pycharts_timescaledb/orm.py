@@ -205,7 +205,7 @@ class TimeseriesConfig:
     - Tick Data: Generates aggregates from raw Ticks information.
     - Minute Data: Generates Aggregates from Pre-aggrigated Minute Data.
         * From Sources such as Alpaca & Polygon.io
-    - Pre-Aggregated: Aggregates are Stored and Generated.
+    - Pre-Aggregated: Only Aggregates are stored, Little/No information is derived.
         * From Sources such as Trading-View & yFinance where data at HTF extends further back in time than LTF Data
 
     -- PARAMS --
@@ -217,7 +217,7 @@ class TimeseriesConfig:
         it will be done with a constant Bucketing Origin Timestamp.
         e.g. US_Stock Data has an origin timestamp of 2000/01/03 8:30 EST for RTH and 2000/01/03 04:00 EST for ETH
         While a Forex Aggregate needs an origin timestamp of 2000/01/03 00:00 UTC. If These assets were stored
-        in the same table, at some of the Higher Timeframe Aggregates would be incorrect.
+        in the same table, some of the Higher Timeframe Aggregates would be incorrect.
 
     - rth_origins: Dict[Asset_type:str, pd.Timestamp]
         : These Timestamps are Origins for Aggregating Regular-Trading-Hours at periods of less than 4 Weeks
@@ -284,8 +284,6 @@ class TimeseriesConfig:
         _default_aggs = _get_ensured(
             self.aggregate_periods, "default", DEFAULT_AGGREGATES
         )
-        if len(_default_aggs) == 0:
-            _default_aggs = DEFAULT_AGGREGATES
 
         _default_raw_aggs = _get_ensured(self.inserted_aggregate_periods, "default", [])
         _default_priority = self.prioritize_rth.get("default", True)
@@ -297,6 +295,16 @@ class TimeseriesConfig:
             inserted_aggregates = _get_ensured(
                 self.inserted_aggregate_periods, asset_class, _default_raw_aggs
             )
+
+            # Error check to Ensure no overlapping aggregate and inserted timeframes
+            # No fuckin way I'm managing that mess of trying to detect what tables need to be JOIN'd
+            overlap = {*asset_aggregates}.intersection(inserted_aggregates)
+            if len(overlap) > 0:
+                raise AttributeError(
+                    f"Asset Class {asset_class} is set to store *and* aggregate the timeframes : \n{overlap}\n\n"
+                    "Timeframes can only be Stored or Aggregated, not Both."
+                )
+
             asset_rth_origin = _get_ensured(self.rth_origins, asset_class, _default_rth)
             asset_eth_origin = _get_ensured(self.eth_origins, asset_class, _default_eth)
             asset_htf_origin = _get_ensured(self.htf_origins, asset_class, _default_htf)

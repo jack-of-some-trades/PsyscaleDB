@@ -270,7 +270,8 @@ def create_symbol_table() -> sql.Composed:
             store_aggregate BOOLEAN NOT NULL DEFAULT False,
             store BOOLEAN GENERATED ALWAYS AS (store_tick OR store_minute OR store_aggregate) STORED,
             attrs jsonb,
-            CONSTRAINT unique_asset UNIQUE (symbol, source, exchange)
+            CONSTRAINT unique_asset UNIQUE (symbol, source, exchange),
+            CONSTRAINT unique_data_schema CHECK (store_tick::int + store_minute::int + store_aggregate::int <= 1)
         );
         CREATE INDEX attrs_gin_idx ON {schema_name}.{table_name} USING gin (attrs);
         CREATE INDEX name_trgm_idx ON {schema_name}.{table_name} USING gin (name gin_trgm_ops);

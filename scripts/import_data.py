@@ -43,8 +43,13 @@ async def main():
 
 def _update_stored_symbols(db: TimescaleDB_EXT):
     """
-    Update the Database to set the given list of symbol filter sets to
-    'store_[]=True' so they get imported
+    Update the Database to set list of symbols filtered by the above [SYMBOLS_TO_IMPORT]
+    filters to 'store_[]=True' so they get imported.
+
+    Important note, to simplify accessing data, a symbol can only store one type of data
+    [tick, minute, or aggregate]. To store multiple types of data for the same symbol,
+    the 'source' column of the data must change. i.e. Alpaca_minute & Alpaca_aggregate
+    would be required 'sources' to store data from alpaca into both of those data schemas.
     """
 
     for _filter in SYMBOLS_TO_IMPORT:
