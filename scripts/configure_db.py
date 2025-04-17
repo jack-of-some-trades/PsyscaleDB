@@ -29,12 +29,12 @@ STD_ASSET_LIST = ["us_fund", "us_stock", "crypto"]
 STD_MINUTE_CONFIG = tsdb.TimeseriesConfig(
     STD_ASSET_LIST,
     rth_origins={
-        "us_stock": Timestamp("2000/01/03 08:30", tz="EST"),
-        "us_fund": Timestamp("2000/01/03 08:30", tz="EST"),
+        "us_stock": Timestamp("2000/01/03 08:30", tz="America/New_York"),
+        "us_fund": Timestamp("2000/01/03 08:30", tz="America/New_York"),
     },
     eth_origins={
-        "us_stock": Timestamp("2000/01/03 04:00", tz="EST"),
-        "us_fund": Timestamp("2000/01/03 04:00", tz="EST"),
+        "us_stock": Timestamp("2000/01/03 04:00", tz="America/New_York"),
+        "us_fund": Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"us_stock": True, "us_fund": True},
     aggregate_periods={"default": tsdb.DEFAULT_AGGREGATES},
@@ -54,12 +54,12 @@ STD_TICK_PERIODS.extend(tsdb.DEFAULT_AGGREGATES)
 STD_TICK_CONFIG = tsdb.TimeseriesConfig(
     STD_ASSET_LIST,
     rth_origins={
-        "us_stock": Timestamp("2000/01/03 08:30", tz="EST"),
-        "us_fund": Timestamp("2000/01/03 08:30", tz="EST"),
+        "us_stock": Timestamp("2000/01/03 08:30", tz="America/New_York"),
+        "us_fund": Timestamp("2000/01/03 08:30", tz="America/New_York"),
     },
     eth_origins={
-        "us_stock": Timestamp("2000/01/03 04:00", tz="EST"),
-        "us_fund": Timestamp("2000/01/03 04:00", tz="EST"),
+        "us_stock": Timestamp("2000/01/03 04:00", tz="America/New_York"),
+        "us_fund": Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"us_stock": True, "us_fund": True},
     aggregate_periods={"default": STD_TICK_PERIODS},
@@ -71,12 +71,12 @@ STD_TICK_CONFIG = tsdb.TimeseriesConfig(
 STD_AGGREGATE_CONFIG = tsdb.TimeseriesConfig(
     STD_ASSET_LIST,
     rth_origins={
-        "us_stock": Timestamp("2000/01/03 08:30", tz="EST"),
-        "us_fund": Timestamp("2000/01/03 08:30", tz="EST"),
+        "us_stock": Timestamp("2000/01/03 08:30", tz="America/New_York"),
+        "us_fund": Timestamp("2000/01/03 08:30", tz="America/New_York"),
     },
     eth_origins={
-        "us_stock": Timestamp("2000/01/03 04:00", tz="EST"),
-        "us_fund": Timestamp("2000/01/03 04:00", tz="EST"),
+        "us_stock": Timestamp("2000/01/03 04:00", tz="America/New_York"),
+        "us_fund": Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"us_stock": True, "us_fund": True},
     aggregate_periods={"default": []},
