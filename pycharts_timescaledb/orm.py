@@ -392,6 +392,10 @@ class TimeseriesConfig:
             )
             # endregion
 
+    def _ext_important(self, asset_class: str) -> bool:
+        # private_method, Assume Asset_class is known
+        return self.eth_origins[asset_class] != self.rth_origins[asset_class]
+
     def all_tables(
         self, asset_class: str, *, include_raw: bool = True
     ) -> List[AssetTable]:
@@ -450,7 +454,7 @@ class TimeseriesConfig:
                 tbl for tbl in self._inserted_tables[asset_class] if tbl.rth is False
             ]
 
-    def get_aggregation_source(self, derived_table: AssetTable) -> AssetTable:
+    def get_cont_agg_source(self, derived_table: AssetTable) -> AssetTable:
         "Return the Most appropriate Asset Table to Aggregate into the given table."
         all_lower_tfs = [
             tbl
@@ -523,6 +527,60 @@ class TimeseriesConfig:
         filtered_aggs = [agg for agg in all_aggs if agg.period > altered_table.period]
         filtered_aggs.sort(key=lambda x: x.period)  # Ensure aggregates are ordered.
         return filtered_aggs
+
+    def get_select_from_table(
+        self, desired_table: AssetTable
+    ) -> Tuple[AssetTable, bool]:
+        """
+        Given the desired AssetTable, return the most appropriate AssetTable to pull or derive
+        the desired data from. The Returned bool denotes when data must be selected or derived
+
+        When True, the data is stored in the returned AssetTable and can be selected.
+        when False, the desired data must be aggregated from the returned AssetTable.
+
+        The desired table should, in the vast majority of cases, have it's RTH property set to
+        True or False, If set to None, it is likely to unnecessarily aggregate higher
+        timeframe data that may be stored and can be selected instead.
+        As a consequence, the desired_table's ext parameter is unused.
+        """
+        tbls = self.all_tables(desired_table.asset_class)
+
+        # All Tables that are an even period divider of what is desired
+        divisor_tbls = [
+            tbl for tbl in tbls if desired_table.period % tbl.period == Timedelta(0)
+        ]
+
+        if len(divisor_tbls) == 0:
+            raise AttributeError(
+                f"Desired Table's Timeframe, {desired_table.period}, "
+                "cannot be derived from info in the database."
+            )
+
+        # Ext information does not matter in this asset_class, return highest timeframe table
+        if not self._ext_important(desired_table.asset_class):
+            divisor_tbls.sort(key=lambda x: x.period)
+            rtn_tbl = divisor_tbls[-1]
+            return rtn_tbl, rtn_tbl.period != desired_table.period
+
+        # Match EXT Information and then return the highest timeframe table
+        if desired_table.rth is None:
+            ext_matches = [tbl for tbl in divisor_tbls if tbl.rth is None]
+        else:
+            ext_matches = [
+                tbl
+                for tbl in divisor_tbls
+                if tbl.rth is None or tbl.rth == desired_table.rth
+            ]
+
+        if len(ext_matches) == 0:
+            raise AttributeError(
+                "Desired Table's RTH State & timeframe combination cannot be derived from database. "
+                f" Desired Table = {desired_table}"
+            )
+
+        ext_matches.sort(key=lambda x: x.period)
+        rtn_tbl = ext_matches[-1]
+        return rtn_tbl, rtn_tbl.period != desired_table.period
 
     @classmethod
     def from_table_names(

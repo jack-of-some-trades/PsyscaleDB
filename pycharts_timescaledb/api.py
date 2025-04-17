@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from typing import (
     Callable,
     Dict,
+    Iterable,
     Iterator,
     List,
     Literal,
@@ -21,7 +22,7 @@ from typing import (
     TypeAlias,
     overload,
 )
-from pandas import Timestamp
+from pandas import DataFrame, Timedelta, Timestamp
 
 import psycopg as pg
 import psycopg.rows as pg_rows
@@ -33,6 +34,7 @@ from .sql_cmds import (
     METADATA_ARGS,
     STRICT_SYMBOL_ARGS,
     SYMBOL_ARGS,
+    AggregateArgs,
     AssetTbls,
     Generic,
     MetadataArgs,
@@ -42,8 +44,9 @@ from .sql_cmds import (
     SeriesTbls,
     Commands,
     SymbolArgs,
+    TickArgs,
 )
-from .orm import TimeseriesConfig
+from .orm import AssetTable, TimeseriesConfig
 
 
 # region ----------- Database Structures  -----------
@@ -82,7 +85,7 @@ class TimeScaleDB:
         *,
         docker_compose_fpath: Optional[str] = None,
     ):
-        self.config: dict[str, Any] = {
+        env_params: dict[str, Any] = {
             "host": os.getenv("TIMESCALE_HOST"),
             "port": os.getenv("TIMESCALE_PORT"),
             "user": os.getenv("TIMESCALE_USER"),
@@ -90,22 +93,22 @@ class TimeScaleDB:
             "password": os.getenv("TIMESCALE_PASSWORD"),
         }
 
-        if self.config["host"] in {"localhost", "127.0.0.1"}:
+        if env_params["host"] in {"localhost", "127.0.0.1"}:
             # Get additional params if using a local database
-            self.config["volume_path"] = os.getenv("TIMESCALE_VOLUME_PATH")
-            self.config["project_name"] = os.getenv("PROJECT_NAME")
+            env_params["volume_path"] = os.getenv("TIMESCALE_VOLUME_PATH")
+            env_params["project_name"] = os.getenv("PROJECT_NAME")
 
-        missing_keys = {key for key, value in self.config.items() if value is None}
+        missing_keys = {key for key, value in env_params.items() if value is None}
         if len(missing_keys) > 0:
             raise AttributeError(
                 f"Cannot instantiate Timescale DB. Missing Environment Variables: {missing_keys} \n"
             )
 
         self.conn_params: dict[str, Any] = {
-            k: self.config[k] for k in ("user", "password", "dbname", "host", "port")
+            k: env_params[k] for k in ("user", "password", "dbname", "host", "port")
         }
 
-        _local = self.config["host"] in {"localhost", "127.0.0.1"}
+        _local = self.conn_params["host"] in {"localhost", "127.0.0.1"}
         _timeout = LOCAL_POOL_GEN_TIMEOUT if _local else POOL_GEN_TIMEOUT
 
         try:
@@ -119,7 +122,9 @@ class TimeScaleDB:
                 raise e  # Give some more informative info here?
 
             # Try and start the local database, give extra buffer on the timeout.
-            self._init_and_start_localdb(docker_compose_fpath)
+            self._init_and_start_localdb(
+                docker_compose_fpath, env_params["volume_path"]
+            )
             with self.pool.connection(timeout=2.5) as conn:
                 conn._check_connection_ok()
 
@@ -299,7 +304,9 @@ class TimeScaleDB:
 
     # region ----------- Private Database Interaction Methods -----------
 
-    def _init_and_start_localdb(self, docker_compose_fpath: Optional[str]):
+    def _init_and_start_localdb(
+        self, docker_compose_fpath: Optional[str], vol_path: str | None
+    ):
         "Starts Up, via subprocess terminal cmds, a local Docker Container that runs TimescaleDB"
         try:  # Ensure Docker is installed
             subprocess.run(["docker", "--version"], capture_output=True, check=True)
@@ -327,9 +334,9 @@ class TimeScaleDB:
                 "Execute 'docker pull timescale/timescaledb-ha:pg17' in a terminal"
             )
 
-        if not os.path.exists(self.config["volume_path"]):
-            print(f'Making Database Volume Folder at {self.config["volume_path"] = }')
-            os.mkdir(self.config["volume_path"])
+        if vol_path and not os.path.exists(vol_path):
+            log.info("Making Database Volume Folder at : %s", vol_path)
+            os.mkdir(vol_path)
 
         if docker_compose_fpath is not None:
             # Overwrite Default YML path if given a valid filepath
@@ -580,13 +587,15 @@ class TimeScaleDB:
                 cursor.statusmessage is not None and cursor.statusmessage == "UPDATE 1"
             )
 
-    def symbol_series_metadata(
+    def stored_symbol_metadata(
         self,
         pkey: int,
         filters: dict[MetadataArgs | str, Any] = {},
     ) -> list[MetadataInfo]:
         """
         Return MetaData about the series information stored for a given symbol, by primary key.
+        Only Returns information about what has been stored & aggregated, not everything that should
+        be stored & aggregated
 
         --PARAMS--
         - pkey : integer
@@ -610,5 +619,120 @@ class TimeScaleDB:
         with self._cursor(dict_cursor=True) as cursor:
             cursor.execute(self[Op.SELECT, AssetTbls._METADATA](_filters))
             return [MetadataInfo(**row) for row in cursor.fetchall()]
+
+    def get_hist(
+        self,
+        pkey: int,
+        timeframe: Timedelta,
+        start: Optional[Timestamp] = None,
+        end: Optional[Timestamp] = None,
+        limit: Optional[int] = None,
+        rth: bool = True,
+        rtn_args: Optional[Iterable[AggregateArgs | TickArgs]] = None,
+        *,
+        schema: Optional[str | StrEnum] = None,
+        asset_class: Optional[str] = None,
+    ) -> Optional[DataFrame]:
+        """
+        Fetch Historical Data from the Database Aggregating the desired data as needed.
+
+        -- PARAMS --
+        - pkey : Int
+            - Primary Key of the Symbol to Fetch
+        - Timeframe : pandas.Timedelta
+            - Interval of the Data to Return. Doesn't not need to be a value stored in the
+            database, merely one that can be derived from stored data.
+            - Timedelta(0) will return Tick Data if it is stored for the given pkey
+        - start : Optional pandas.Timestamp : Earliest Date of Data to Retrieve
+        - end : Optional pandas.Timestamp : Latest Date of Data to Retrieve
+        - limit : Optional Int : Maximum number of data points to return
+        - rth : bool
+            - When True, Return RTH Hours only
+            - When False, Return All stored data, RTH/ETH/Closed/Breaks, etc
+        - rtn_args : Optional list of arguments to return.
+            - Default = {"dt", "open", "high", "low", "close", "volume", "price"}
+            - Note: 'dt' will always be returned even if not included.
+
+        - schema : Optional str | strEnum
+            - Data Schema to fetch the data from.
+        - asset_class : Optional str
+            - Asset_class of the symbol requested
+                - Note: Both asset_class & schema will be determined from the pkey if necessary.
+                However, if both are already known and given as args that information will be
+                used in place of querying the database for it.
+        """
+
+        # Search Metadata for available data at TF or lower
+        with self._cursor(dict_cursor=True) as cursor:
+
+            # region -- Fetch Asset Class & Schema given the known pkey if necessary --
+            if asset_class is None or schema is None:
+                _filters = [("pkey", "=", pkey)]
+                cursor.execute(
+                    self[Op.SELECT, Generic.TABLE](
+                        Schema.SECURITY,
+                        AssetTbls.SYMBOLS,
+                        [
+                            "asset_class",
+                            "store_tick",
+                            "store_minute",
+                            "store_aggregate",
+                        ],
+                        _filters,
+                        limit,
+                    )
+                )
+                rsp = cursor.fetchall()
+                if len(rsp) == 0:
+                    log.warning("Unknown pkey : %s", pkey)
+                    return
+                rsp = rsp[0]
+
+                if rsp["store_minute"]:
+                    schema = Schema.MINUTE_DATA
+                elif rsp["store_aggregate"]:
+                    schema = Schema.AGGREGATE_DATA
+                elif rsp["store_tick"]:
+                    schema = Schema.TICK_DATA
+                else:
+                    schema = None
+
+                if schema is None:
+                    log.warning("pkey = %s is known, but not Stored", pkey)
+                    return
+
+                asset_class = rsp["asset_class"]
+                assert asset_class
+            # endregion
+
+            desired_table = AssetTable(asset_class, timeframe, False, False, rth)
+            src_table, need_to_calc = self.table_config[
+                Schema(schema)
+            ].get_select_from_table(desired_table)
+
+            # Configure return args as a set
+            if rtn_args is None:
+                _rtns = {"dt", "open", "high", "low", "close", "volume", "price"}
+            else:
+                _rtns = {*rtn_args}
+
+            if need_to_calc:
+                log.info(
+                    "Calculating Aggregate at Timeframe : %s, from %s Timeframe",
+                    timeframe,
+                    src_table.period,
+                )
+                cmd = self[Op.SELECT, SeriesTbls.CALCULATE_AGGREGATE](
+                    schema, src_table, timeframe, pkey, rth, start, end, limit, _rtns
+                )
+            else:
+                # Works for both Aggregates and Raw Tick Data Retrieval
+                cmd = self[Op.SELECT, SeriesTbls.RAW_AGGREGATE](
+                    schema, src_table, pkey, rth, start, end, limit, _rtns
+                )
+
+            cursor.execute(cmd)
+            rsp = cursor.fetchall()
+            return None if len(rsp) == 0 else DataFrame(rsp[0])
 
     # endregion

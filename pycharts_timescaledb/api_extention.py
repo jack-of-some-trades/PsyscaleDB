@@ -583,7 +583,7 @@ class TimescaleDB_EXT(TimeScaleDB):
             tbls.sort(key=lambda x: x.period)  # Must generate lowest periods first
             for tbl in tbls:
                 log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
-                ref_table = config.get_aggregation_source(tbl)
+                ref_table = config.get_cont_agg_source(tbl)
                 tbl_type = (
                     SeriesTbls.CONTINUOUS_TICK_AGG
                     if ref_table.period == Timedelta(0)
@@ -682,7 +682,7 @@ class TimescaleDB_EXT(TimeScaleDB):
             tbls.sort(key=lambda x: x.period)  # Must generate lowest periods first
             for tbl in tbls:
                 log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
-                ref_table = config.get_aggregation_source(tbl)
+                ref_table = config.get_cont_agg_source(tbl)
                 tbl_type = (
                     SeriesTbls.CONTINUOUS_TICK_AGG
                     if ref_table.period == Timedelta(0)
@@ -744,7 +744,7 @@ class TimescaleDB_EXT(TimeScaleDB):
         Returns a list of all Metadata for a given pkey, asset class, and schema.
         Returned list is guerenteed to have both metadata that is stored and that should be stored.
         """
-        stored_metadata = self.symbol_series_metadata(
+        stored_metadata = self.stored_symbol_metadata(
             pkey, {"schema_name": schema, "is_raw_data": True}
         )
         req_tables = self.table_config[schema].raw_tables(asset_class)

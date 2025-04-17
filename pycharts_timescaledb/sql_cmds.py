@@ -615,19 +615,8 @@ def select_origin(
 ) -> sql.Composed:
     if _all:
         return _select_all_origins(schema)
-    origin = (
-        "origin_htf"
-        if period >= Timedelta("4W")
-        else "origin_rth" if rth else "origin_eth"
-    )
-    return sql.SQL(
-        "SELECT {origin} FROM {schema_name}.{table_name} WHERE asset_class = {asset_class};"
-    ).format(
-        schema_name=sql.Identifier(schema),
-        table_name=sql.Identifier(SeriesTbls._ORIGIN),
-        origin=sql.Literal(origin),
-        asset_class=sql.Literal(asset_class),
-    )
+    else:
+        return _select_origin(schema, asset_class, rth, period) + sql.SQL(";")
 
 
 def _select_all_origins(schema: str) -> sql.Composed:
@@ -636,6 +625,27 @@ def _select_all_origins(schema: str) -> sql.Composed:
     ).format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(SeriesTbls._ORIGIN),
+    )
+
+
+def _select_origin(
+    schema: str,
+    asset_class: str = "",
+    rth: bool | None = None,
+    period: Timedelta = Timedelta(-1),
+) -> sql.Composed:
+    origin = (
+        "origin_htf"
+        if period >= Timedelta("4W")
+        else "origin_rth" if rth else "origin_eth"
+    )
+    return sql.SQL(
+        "SELECT {origin} FROM {schema_name}.{table_name} WHERE asset_class = {asset_class}"
+    ).format(
+        schema_name=sql.Identifier(schema),
+        table_name=sql.Identifier(SeriesTbls._ORIGIN),
+        origin=sql.Identifier(origin),
+        asset_class=sql.Literal(asset_class),
     )
 
 
@@ -698,6 +708,14 @@ def delete_origin(schema: str, asset_class: str) -> sql.Composed:
 
 
 # region -------- -------- Tick Timeseries Commands -------- --------
+
+TickArgs = Literal[
+    "dt",
+    "rth",
+    "price",
+    "volume",
+]
+TICK_ARGS = set(v for v in get_args(TickArgs))
 
 
 def create_tick_table(schema: str, table: AssetTable) -> sql.Composed:
@@ -885,6 +903,11 @@ def upsert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Compos
 
 # region -------- -------- -------- Aggrigate Timeseries Commands -------- -------- --------
 
+AggregateArgs = Literal[
+    "dt", "rth", "open", "high", "low", "close", "volume", "vwap", "ticks"
+]
+AGGREGATE_ARGS = set(v for v in get_args(AggregateArgs))
+
 
 def create_raw_aggregate_table(schema: str, table: AssetTable) -> sql.Composed:
     "Aggregate Table that is filled with data from a source API, Should be maintained by the user."
@@ -1052,6 +1075,168 @@ def upsert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.C
         )
 
 
+def _array_select(column: str):
+    return sql.SQL("ARRAY( SELECT {col} FROM inner_select) AS {col}").format(
+        col=sql.Identifier(column)
+    )
+
+
+def select_aggregates(
+    schema: Schema,
+    table: AssetTable,
+    pkey: int,
+    rth: bool,
+    start: Optional[Timestamp],
+    end: Optional[Timestamp],
+    _limit: Optional[int],
+    rtn_args: set[str],
+) -> sql.Composed:
+
+    _filters: list[Filter] = [("pkey", "=", pkey)]
+    if start is not None:
+        _filters.append(("dt", ">=", start))
+    if end is not None:
+        _filters.append(("dt", "<", end))
+
+    # Filter by rth if accessing a table that has both rth and eth
+    if rth and table.ext and table.rth is None:
+        _filters.append(("rth", "=", 0))
+
+    if "rth" in rtn_args and table.ext and table.rth is None:
+        # 'rth' Doesn't exist in the table we are selecting from.
+        rtn_args.remove("rth")
+
+    rtn_args |= {"dt"}  # Ensure dt is returned
+    if table.period == Timedelta(0):
+        _ordered_rtn_args = [v for v in get_args(TickArgs) if v in rtn_args]
+    else:
+        _ordered_rtn_args = [v for v in get_args(AggregateArgs) if v in rtn_args]
+
+    # Select all the needed data, then reorient it so it is returned by column instead of by row
+    return sql.SQL(
+        """
+        WITH inner_select AS (
+            SELECT {rtn_args} FROM {schema_name}.{table_name}{filter}{order}{limit}
+        )
+        SELECT {rtn_arrays} ;
+    """
+    ).format(
+        schema_name=sql.Identifier(schema),
+        table_name=sql.Identifier(str(table)),
+        rtn_args=arg_list(_ordered_rtn_args),
+        filter=where(_filters),
+        order=order("dt", True),
+        limit=limit(_limit),
+        rtn_arrays=sql.SQL(",\n").join(
+            [_array_select(col) for col in _ordered_rtn_args]
+        ),
+    )
+
+
+def calculate_aggregates(
+    schema: Schema,
+    src_table: AssetTable,
+    timeframe: Timedelta,
+    pkey: int,
+    rth: bool,
+    start: Optional[Timestamp],
+    end: Optional[Timestamp],
+    _limit: Optional[int],
+    rtn_args: set[str],
+) -> sql.Composed:
+
+    _filters: list[Filter] = [("pkey", "=", pkey)]
+    if start is not None:
+        _filters.append(("dt", ">=", start))
+    if end is not None:
+        _filters.append(("dt", "<", end))
+
+    ext_tbl = src_table.ext and src_table.rth is None
+    if ext_tbl and rth:
+        # Filter by rth if accessing a table that has both rth and eth
+        _filters.append(("rth", "=", 0))
+    if not ext_tbl and "rth" in rtn_args:
+        # 'rth' Doesn't exist in the table we are selecting from.
+        rtn_args.remove("rth")
+
+    if timeframe == Timedelta(0):
+        _inner_sel_args = _tick_inner_select_args(rtn_args)
+    else:
+        _inner_sel_args = _agg_inner_select_args(rtn_args)
+
+    rtn_args |= {"dt"}  # Ensure dt is returned
+    _ordered_rtn_args = [v for v in get_args(AggregateArgs) if v in rtn_args]
+
+    return sql.SQL(
+        """
+        WITH inner_select AS (
+            SELECT 
+                time_bucket({interval}, dt, ({origin_select})) as dt,
+                {inner_select_args}
+            FROM {schema}.{table_name}{filters} GROUP BY 1 ORDER BY 1{limit} 
+        )
+        SELECT {rtn_arrays} ;
+        """
+    ).format(
+        schema=sql.Identifier(schema),
+        table_name=sql.Identifier(repr(src_table)),
+        origin_select=_select_origin(schema, src_table.asset_class, rth, timeframe),
+        interval=sql.Literal(str(int(timeframe.total_seconds())) + " seconds"),
+        inner_select_args=sql.SQL(", ").join(_inner_sel_args),
+        filters=where(_filters),
+        limit=limit(_limit),
+        rtn_arrays=sql.SQL(",\n").join(
+            [_array_select(col) for col in _ordered_rtn_args]
+        ),
+    )
+
+
+def _agg_inner_select_args(args: set[str]) -> list[sql.Composable]:
+    inner_select_args = []
+    if "rth" in args:
+        inner_select_args.append(sql.SQL("first(rth, dt) AS rth"))
+    if "open" in args:
+        inner_select_args.append(sql.SQL("first(open, dt) AS open"))
+    if "high" in args:
+        inner_select_args.append(sql.SQL("max(high) AS high"))
+    if "low" in args:
+        inner_select_args.append(sql.SQL("min(low) AS low"))
+    if "close" in args:
+        inner_select_args.append(sql.SQL("last(close, dt) AS close"))
+    if "volume" in args:
+        inner_select_args.append(sql.SQL("sum(volume) AS volume"))
+    if "ticks" in args:
+        inner_select_args.append(sql.SQL("sum(ticks) AS ticks"))
+    if "vwap" in args:
+        inner_select_args.append(
+            sql.SQL("sum(vwap * volume) / NULLIF(SUM(volume), 0) AS vwap")
+        )
+    return inner_select_args
+
+
+def _tick_inner_select_args(args: set[str]) -> list[sql.Composable]:
+    inner_select_args = []
+    if "rth" in args:
+        inner_select_args.append(sql.SQL("first(rth, dt) AS rth"))
+    if "open" in args:
+        inner_select_args.append(sql.SQL("first(price, dt) AS open"))
+    if "high" in args:
+        inner_select_args.append(sql.SQL("max(price) AS high"))
+    if "low" in args:
+        inner_select_args.append(sql.SQL("min(price) AS low"))
+    if "close" in args:
+        inner_select_args.append(sql.SQL("last(price, dt) AS close"))
+    if "volume" in args:
+        inner_select_args.append(sql.SQL("sum(volume) AS volume"))
+    if "ticks" in args:
+        inner_select_args.append(sql.SQL("count(*) AS ticks"))
+    if "vwap" in args:
+        inner_select_args.append(
+            sql.SQL("sum(price * volume) / NULLIF(SUM(volume), 0) AS vwap")
+        )
+    return inner_select_args
+
+
 # endregion
 
 # endregion
@@ -1089,6 +1274,8 @@ class SeriesTbls(StrEnum):
     RAW_AGG_BUFFER = auto()
     CONTINUOUS_AGG = auto()
     CONTINUOUS_TICK_AGG = auto()
+    # Following is Not a stored_table, just references a specific select function
+    CALCULATE_AGGREGATE = auto()
 
 
 class AssetTbls(StrEnum):
@@ -1201,6 +1388,8 @@ OPERATION_MAP: OperationMap = {
         Generic.SCHEMA_TABLES: list_tables,
         Generic.SCHEMA: list_schemas,
         SeriesTbls._ORIGIN: select_origin,
+        SeriesTbls.RAW_AGGREGATE: select_aggregates,
+        SeriesTbls.CALCULATE_AGGREGATE: calculate_aggregates,
         AssetTbls.SYMBOLS: select_symbols,
         AssetTbls._METADATA: select_timeseries_metadata,
         # AssetTbls.SPLITS: ,
