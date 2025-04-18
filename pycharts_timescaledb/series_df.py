@@ -114,7 +114,7 @@ def _column_name_check(
 
 class Series_DF:
     """
-    Distilled & Slightly Altered version of Series_DF from lightweight_pychart.
+    Distilled & Slightly Altered version of Series_DF from lightweight_pycharts.
     Used to standardize column names and mark the Trading Hours Session using
     pandas_market_calendars.
     """
@@ -198,10 +198,7 @@ class Calendars:
     Distilled version of Calendars class from lightweight_pycharts.
     Class abstracts and contains the functionality of pandas_market_calendars.
 
-    This allows for Pandas_Market_Calendars to be conditionally loaded, defaulting to a calendar
-    naive, 24/7 schedule, which is more performant for simple operations.
-
-    Additionally, Instantiating only a single instance reduces unnecessary redundancy by making
+    Instantiating only a single instance reduces unnecessary redundancy by making
     market schedules shared across all dataframes that utilize them. Considering that generating
     schedules is easily the slowest part of analyzing a Market's Open/Close Session this equates
     to a significant performance improvement.

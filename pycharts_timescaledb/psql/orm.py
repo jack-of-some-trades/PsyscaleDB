@@ -1,6 +1,7 @@
 """Suppoting Dataclass Objects and Constants for interfacing with a Timescale Database"""
 
 from __future__ import annotations
+from enum import StrEnum
 import logging
 from typing import (
     Any,
@@ -12,6 +13,7 @@ from typing import (
     Protocol,
     Self,
     Tuple,
+    get_args,
 )
 
 from dataclasses import dataclass, field
@@ -28,6 +30,7 @@ DEFAULT_AGGREGATES = [
     Timedelta("1D"),
     Timedelta("1W"),
 ]
+
 log = logging.getLogger("pycharts-timescaledb")
 
 
@@ -48,6 +51,45 @@ class Storable(Protocol):
     def to_json(self) -> dict:
         "Returns JSON representation of the object as a dictionary"
         raise NotImplementedError
+
+
+MetadataArgs = Literal[
+    "pkey",
+    "table_name",
+    "schema_name",
+    "start_date",
+    "end_date",
+    "timeframe",
+    "is_raw_data",
+    "trading_hours_type",
+]
+METADATA_ARGS = set(v for v in get_args(MetadataArgs))
+
+
+@dataclass
+class MetadataInfo:
+    """
+    Construct for returning symbol metadata.
+
+    Dataclass contains the earliest and latest recorded datapoint (start_date & end_date
+    respectfully) for a given data table (schema_name & table_name)
+    """
+
+    table_name: str
+    schema_name: str | StrEnum
+    start_date: Timestamp
+    end_date: Timestamp
+    table: AssetTable | None = None
+    timeframe: Timedelta = field(init=False)
+
+    def __post_init__(self):
+        # Allows str/int/datetime args to be passed to constructer and ensure
+        # a pd.Timestamp is always stored.
+        self.start_date = Timestamp(self.start_date)
+        self.end_date = Timestamp(self.end_date)
+        if self.table is None:
+            self.table = AssetTable.from_table_name(self.table_name)
+        self.timeframe = self.table.period
 
 
 # region -------- -------- -------- Asset Table Dataclass + Functions -------- -------- --------
@@ -198,7 +240,7 @@ class AssetTable:
 @dataclass
 class TimeseriesConfig:
     """
-    Defines the storeage scheme of timeseries data within the postgres database.
+    Defines the storage scheme of timeseries data within the postgres database.
     3 Of these objects are used by the TimescaleDB interface, One for each of the following Schema:
     Tick Data, Minute Data, Pre-aggregated Data.
 

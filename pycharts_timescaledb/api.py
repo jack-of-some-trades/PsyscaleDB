@@ -30,23 +30,24 @@ from psycopg import OperationalError, sql
 from psycopg.pq._enums import ExecStatus
 from psycopg_pool import ConnectionPool, PoolTimeout
 
-from .sql_cmds import (
+from .psql import (
+    SYMBOL_ARGS,
     METADATA_ARGS,
     STRICT_SYMBOL_ARGS,
-    SYMBOL_ARGS,
+    TickArgs,
+    SymbolArgs,
     AggregateArgs,
-    AssetTbls,
-    Generic,
     MetadataArgs,
     MetadataInfo,
+    GenericTbls,
     Operation as Op,
     Schema,
+    AssetTbls,
     SeriesTbls,
     Commands,
-    SymbolArgs,
-    TickArgs,
+    AssetTable,
+    TimeseriesConfig,
 )
-from .orm import AssetTable, TimeseriesConfig
 
 
 # region ----------- Database Structures  -----------
@@ -384,7 +385,7 @@ class TimeScaleDB:
                     log.debug("Origin table not found in Schema: %s", schema)
 
                 # ---- Reconstruct Timeseries Config from existing table names ----
-                cursor.execute(self[Op.SELECT, Generic.SCHEMA_TABLES](schema))
+                cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA_TABLES](schema))
                 tbl_names = [
                     rsp[0]
                     for rsp in cursor.fetchall()
@@ -416,7 +417,7 @@ class TimeScaleDB:
 
     def _ensure_securities_schema_format(self):
         with self._cursor() as cursor:
-            cursor.execute(self[Op.SELECT, Generic.SCHEMA_TABLES](Schema.SECURITY))
+            cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA_TABLES](Schema.SECURITY))
             tables: set[str] = {rsp[0] for rsp in cursor.fetchall()}
 
             if AssetTbls.SYMBOLS not in tables:
@@ -564,7 +565,7 @@ class TimeScaleDB:
         _args = [(k, v) for k, v in args.items() if k in SYMBOL_ARGS]
         if len(_args) == 0:
             log.warning(
-                "Attemping to update Database symbol(s) but no arg updates where given. pkey(s) = %s",
+                "Attemping to update Database symbol but no arg updates where given. pkey(s) = %s",
                 pkey,
             )
             return False
@@ -669,7 +670,7 @@ class TimeScaleDB:
             if asset_class is None or schema is None:
                 _filters = [("pkey", "=", pkey)]
                 cursor.execute(
-                    self[Op.SELECT, Generic.TABLE](
+                    self[Op.SELECT, GenericTbls.TABLE](
                         Schema.SECURITY,
                         AssetTbls.SYMBOLS,
                         [

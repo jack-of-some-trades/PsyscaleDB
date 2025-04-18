@@ -6,8 +6,17 @@ Specifically Designed for use with Lightweight-Pycharts
 import logging
 from typing import Literal
 from .api import TimeScaleDB
-from .orm import AssetTable, TimeseriesConfig, DEFAULT_AGGREGATES
-from .sql_cmds import Operation, AssetTbls, SeriesTbls, UserTbls
+from .psql import (
+    Operation,
+    AssetTbls,
+    SeriesTbls,
+    AssetTable,
+    TimeseriesConfig,
+    DEFAULT_AGGREGATES,
+)
+
+# Not Importing EXT to preserve lazy loading
+# from .api_extention import TimescaleDB_EXT
 
 __all__ = (
     "TimeScaleDB",
@@ -18,7 +27,6 @@ __all__ = (
     "Operation",
     "AssetTbls",
     "SeriesTbls",
-    "UserTbls",
 )
 
 

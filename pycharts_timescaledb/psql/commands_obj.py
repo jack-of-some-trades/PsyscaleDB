@@ -1,0 +1,128 @@
+"""SQL Operation Map Construction and Commands Accessor"""
+
+from __future__ import annotations
+from enum import StrEnum
+from functools import partial
+from typing import Optional, Tuple, TypeAlias, Callable
+
+from psycopg import sql
+
+from . import generic as gen
+from . import security as sec
+from . import timeseries as ts
+from .enum import Operation, Schema, GenericTbls, AssetTbls, SeriesTbls
+
+
+# pylint: disable=protected-access
+class Commands:
+    """
+    Class that stores formattable Postgres Commands based on operation and table type.
+
+    Extendable with custom PostgreSQL functions. Given functions will override base functions
+    in the event a new function is given for a given operation, table pair.
+
+    Since the Table Key is a StrEnum, overriding will occur if the StrEnums have identical values,
+    even if they are separately defined StrEnums.
+    """
+
+    def __init__(self, operation_map: Optional[OperationMap] = None) -> None:
+        self.operation_map = OPERATION_MAP
+
+        if operation_map is not None:
+            self.merge_operations(operation_map)
+
+    def merge_operations(self, operation_map: OperationMap):
+        """
+        Merge additional operations into the existing suite of pre-formatted SQL Commands.
+        Merging prefers the operations given over the operations present.
+
+        Commands are access via Operation & strEnums. strEnums are keyed as strings, not object ids.
+        Therefore, overwriting not only occurs when a command is passed with an already existing
+        [Operation, Table_type] but also when a command is passed as [Operation, str(table_type)]
+
+        e.g.
+        [Operation.Create, AssetTbls.Symbol] = sql.SQL() & [Operation.Create, 'symbol'] = sql.SQL()
+        will both overwrite the creation of the symbols table.
+        """
+        for operation, tbl_map in operation_map.items():
+            self.operation_map[operation] |= tbl_map
+
+    def __getitem__(
+        self, args: Tuple[Operation, StrEnum]
+    ) -> Callable[..., sql.Composed]:
+        """
+        Accessor to retrieve sql commands. Does not type check function args.
+        Call Signature is Obj[Operation, Table](*Function Specific args)
+        """
+        if args[1] not in self.operation_map[args[0]]:
+            raise ValueError(
+                f"Operation '{args[0].name}' not known for Postgres Table: {args[1].value}"
+            )
+
+        return self.operation_map[args[0]][args[1]]
+
+
+OperationMap: TypeAlias = dict[Operation, dict[StrEnum, Callable[..., sql.Composed]]]
+
+OPERATION_MAP: OperationMap = {
+    # Mapping that defines the SQL Composing Function for each Operation and Table Combination
+    Operation.CREATE: {
+        SeriesTbls._ORIGIN: ts.create_origin_table,
+        SeriesTbls.TICK: ts.create_tick_table,
+        SeriesTbls.TICK_BUFFER: ts.create_raw_tick_buffer,
+        SeriesTbls.RAW_AGGREGATE: ts.create_raw_aggregate_table,
+        SeriesTbls.RAW_AGG_BUFFER: ts.create_raw_agg_buffer,
+        SeriesTbls.CONTINUOUS_AGG: ts.create_continuous_aggrigate,
+        SeriesTbls.CONTINUOUS_TICK_AGG: ts.create_continuous_tick_aggregate,
+        AssetTbls.SYMBOLS: sec.create_symbol_table,
+        AssetTbls.SYMBOLS_BUFFER: sec.create_symbol_buffer,
+        AssetTbls._SYMBOL_SEARCH_FUNCS: sec.create_search_functions,
+        AssetTbls._METADATA: sec.create_timeseries_metadata_view,
+        AssetTbls._METADATA_FUNC: sec.create_timeseries_metadata_subfunction,
+    },
+    Operation.INSERT: {
+        SeriesTbls.TICK_BUFFER: ts.insert_copied_ticks,
+        SeriesTbls.RAW_AGG_BUFFER: ts.insert_copied_aggregates,
+        AssetTbls.SYMBOLS_BUFFER: sec.insert_copied_symbols,
+        SeriesTbls._ORIGIN: ts.insert_origin,
+    },
+    Operation.UPSERT: {
+        SeriesTbls.TICK_BUFFER: ts.upsert_copied_ticks,
+        SeriesTbls.RAW_AGG_BUFFER: ts.upsert_copied_aggregates,
+        AssetTbls.SYMBOLS_BUFFER: sec.upsert_copied_symbols,
+    },
+    Operation.UPDATE: {
+        GenericTbls.TABLE: gen.update,
+        SeriesTbls._ORIGIN: ts.update_origin,
+        AssetTbls.SYMBOLS: partial(gen.update, Schema.SECURITY, AssetTbls.SYMBOLS),
+    },
+    Operation.COPY: {
+        SeriesTbls.TICK_BUFFER: ts.copy_ticks,
+        SeriesTbls.RAW_AGG_BUFFER: ts.copy_aggregates,
+        AssetTbls.SYMBOLS_BUFFER: sec.copy_symbols,
+    },
+    Operation.SELECT: {
+        GenericTbls.TABLE: gen.select,
+        GenericTbls.SCHEMA: gen.list_schemas,
+        GenericTbls.SCHEMA_TABLES: gen.list_tables,
+        SeriesTbls._ORIGIN: ts.select_origin,
+        SeriesTbls.RAW_AGGREGATE: ts.select_aggregates,
+        SeriesTbls.CALCULATE_AGGREGATE: ts.calculate_aggregates,
+        AssetTbls.SYMBOLS: sec.select_symbols,
+        AssetTbls._METADATA: sec.select_timeseries_metadata,
+    },
+    Operation.DELETE: {
+        GenericTbls.TABLE: gen.delete_items,
+        SeriesTbls._ORIGIN: ts.delete_origin,
+    },
+    Operation.DROP: {
+        GenericTbls.SCHEMA: gen.drop_schema,
+        GenericTbls.TABLE: gen.drop_table,
+        GenericTbls.VIEW: gen.drop_materialized_view,
+    },
+    Operation.REFRESH: {
+        AssetTbls._METADATA: sec.refresh_timeseries_metadata_view,
+        SeriesTbls.CONTINUOUS_AGG: ts.refresh_continuous_aggregate,
+        SeriesTbls.CONTINUOUS_TICK_AGG: ts.refresh_continuous_aggregate,
+    },
+}

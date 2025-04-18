@@ -1,19 +1,20 @@
 """Extension to the TimescaleDB Class to add Function Scripts that Configure and Manage Data"""
 
 import logging
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional, Tuple, get_args
 
 from pandas import DataFrame, Series, Timedelta, Timestamp
 
 from .series_df import Series_DF
-from .orm import AssetTable, TimeseriesConfig
-from .sql_cmds import (
-    Generic,
+from .psql import (
+    GenericTbls,
     MetadataInfo,
     Operation as Op,
     Schema,
     AssetTbls,
     SeriesTbls,
+    AssetTable,
+    TimeseriesConfig,
 )
 
 from .api import TimeScaleDB, TupleCursor
@@ -46,13 +47,13 @@ class TimescaleDB_EXT(TimeScaleDB):
         """
 
         with self._cursor() as cursor:
-            cursor.execute(self[Op.SELECT, Generic.SCHEMA]())
-            schemas = self.cmds.all_schemas
+            cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA]())
+            schemas = set(get_args(Schema))
 
             # Check & Create Schemas
             for schema in schemas.difference({rsp[0] for rsp in cursor.fetchall()}):
                 log.info("Creating Schema '%s'", schema)
-                cursor.execute(self[Op.CREATE, Generic.SCHEMA](schema))
+                cursor.execute(self[Op.CREATE, GenericTbls.SCHEMA](schema))
 
             cursor.connection.commit()
 
@@ -190,7 +191,7 @@ class TimescaleDB_EXT(TimeScaleDB):
             _filter = ("pkey", "=", pkey)
 
             cursor.execute(
-                self[Op.SELECT, Generic.TABLE](
+                self[Op.SELECT, GenericTbls.TABLE](
                     Schema.SECURITY, AssetTbls.SYMBOLS, _rtn_args, _filter
                 )
             )
@@ -371,7 +372,7 @@ class TimescaleDB_EXT(TimeScaleDB):
                 # Loop Through Edited Tables
                 for table_name, mdata in mdata_dict.items():
                     log.info(
-                        " --- Refreshing Tables Associated with Table : %s ---- ",
+                        " --- Refreshing Aggregates Associated with Table : %s ---- ",
                         table_name,
                     )
                     assert mdata.table  # Ensuring mata.Table is defined by post_init
@@ -379,7 +380,7 @@ class TimescaleDB_EXT(TimeScaleDB):
                         mdata.table
                     )
                     # Add some buffer dates so entire time chucks are covered
-                    # (Times Chucks will not update unless they are completely included )
+                    # Times Chucks will not refresh unless they are completely included
                     mdata.start_date -= Timedelta("4W")
                     mdata.end_date += Timedelta("4W")
 
@@ -421,8 +422,8 @@ class TimescaleDB_EXT(TimeScaleDB):
               - 'abort' - Do Nothing
               - 'none' - Only refresh the security._metadata view
               - 'schema' - Ask to refresh per schema
-              - 'asset' - Ask to refresh entire asset_classes
-              - 'table' - ask to refresh individual tables
+              - 'asset' - Ask to refresh per asset_class
+              - 'table' - ask to refresh per individual table
 
             When choosing 'asset' or 'table' the higher level filters will also be available.
         """
@@ -502,7 +503,7 @@ class TimescaleDB_EXT(TimeScaleDB):
         config: TimeseriesConfig,
     ):
         "Script to Make Changes to the configuration of stored Timeseries Data"
-        cursor.execute(self[Op.SELECT, Generic.SCHEMA_TABLES](schema))
+        cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA_TABLES](schema))
         tables: set[str] = {rsp[0] for rsp in cursor.fetchall()}
         log.info(
             "---- ---- ---- Configuring Timeseries Schema '%s' ---- ---- ----", schema
@@ -635,7 +636,7 @@ class TimescaleDB_EXT(TimeScaleDB):
             all_aggregates.sort(key=lambda x: x.period, reverse=True)
             for tbl in all_aggregates:
                 log.info("Dropping Table: %s", tbl.table_name)
-                cursor.execute(self[Op.DROP, Generic.VIEW](schema, tbl.table_name))
+                cursor.execute(self[Op.DROP, GenericTbls.VIEW](schema, tbl.table_name))
 
             # Remove Unwanted Inserted Table Data
             for tbl in [tbl for tbl in removals if tbl.raw]:
@@ -652,7 +653,7 @@ class TimescaleDB_EXT(TimeScaleDB):
                     continue
 
                 log.info("Dropping Inserted Table: %s", tbl.table_name)
-                cursor.execute(self[Op.DROP, Generic.TABLE](schema, tbl.table_name))
+                cursor.execute(self[Op.DROP, GenericTbls.TABLE](schema, tbl.table_name))
 
             # Create new Raw Tables
             for tbl in [tbl for tbl in additions if tbl.raw]:
@@ -722,7 +723,7 @@ class TimescaleDB_EXT(TimeScaleDB):
             tbls.sort(key=lambda x: x.period, reverse=True)
             for tbl in tbls:
                 # Catch all Table Type for Generic Drop Commands, Will Cascade
-                tbl_type = Generic.TABLE if tbl.raw else Generic.VIEW
+                tbl_type = GenericTbls.TABLE if tbl.raw else GenericTbls.VIEW
                 cursor.execute(cmd := self[Op.DROP, tbl_type](schema, tbl.table_name))
                 log.debug(cmd.as_string())
 
