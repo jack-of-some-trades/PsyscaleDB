@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: psyscale
+Version: 0.0.0
+Summary: A simple Python library for storing & retrieving financial data in a TimescaleDB optimized Postgres Database.
+Author: jack_of_some_trades
+License: TBD
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: pandas>=2.2.2
+Requires-Dist: pandas-market-calendars>=5.0.0
+Requires-Dist: psycopg[binary,pool]>=3.2.6
+Requires-Dist: python-dotenv>=1.0.1
+
+PsyscaleDB is a lightweight Python library designed for efficient storage, querying, and management of financial timeseries data using a TimescaleDB-accelerated PostgreSQL backend. Built on top of psycopg and tightly integrated with pandas, it offers a simplified interface for working with financial timeseries datasets in the form of DataFrames. 
+
+Designed for flexibility, the library leaves the backend database open for direct manipulation via psycopg commands whenever desired.

@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+psyscale/__init__.py
+psyscale/client.py
+psyscale/manager.py
+psyscale/series_df.py
+psyscale.egg-info/PKG-INFO
+psyscale.egg-info/SOURCES.txt
+psyscale.egg-info/dependency_links.txt
+psyscale.egg-info/requires.txt
+psyscale.egg-info/top_level.txt

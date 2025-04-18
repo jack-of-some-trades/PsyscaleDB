@@ -7,24 +7,25 @@ from typing import Literal
 
 import dotenv
 
-import pycharts_timescaledb as tsdb
-from pycharts_timescaledb.api_extention import TimescaleDB_EXT
 from broker_apis.alpaca_api import AlpacaAPI
+
+from psyscale import set_psyscale_log_level
+from psyscale.manager import PsyscaleMod
 
 dotenv.load_dotenv(dotenv.find_dotenv())
 
-tsdb.set_timescale_db_log_level("INFO")
-log = logging.getLogger("pycharts-timescaledb")
+set_psyscale_log_level("INFO")
+log = logging.getLogger("psyscale_log")
 
 
 async def main():
     on_conflict: Literal["ignore", "update"] = "update"
-    db = TimescaleDB_EXT()
+    db = PsyscaleMod()
 
     _import_alpaca(db, on_conflict)
 
 
-def _import_alpaca(db: TimescaleDB_EXT, on_conflict: Literal["ignore", "update"]):
+def _import_alpaca(db: PsyscaleMod, on_conflict: Literal["ignore", "update"]):
     """
     Inserts securities from alpaca separating them into asset_classes US_Stock, US_Fund, & Crypto
     Updates are not dynamic, they're forced when a Symbol & Exchange pair are already in the table.

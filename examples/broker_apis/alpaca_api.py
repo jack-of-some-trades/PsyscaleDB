@@ -1,7 +1,6 @@
 """Historical data stream access through alpaca"""
 
 from datetime import datetime
-from json import dumps
 import logging
 from math import floor
 import os
@@ -15,7 +14,7 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
 
-log = logging.getLogger("pycharts-timescaledb")
+log = logging.getLogger("psyscale_log")
 
 ALPACA_API_KEYS: Dict[str, Any] = {
     "raw_data": True,
@@ -110,7 +109,7 @@ class AlpacaAPI:
 
 
 def _timedelta_to_alp(interval: Timedelta) -> TimeFrame:
-    "Create a TF Object from a Pandas Timedelta Object"
+    "Create a TimeFrame Object from a Pandas Timedelta Object"
     if interval < Timedelta("1min"):
         raise ValueError("Alpaca Does not support sub 1-minute intervals")
 

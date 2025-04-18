@@ -10,14 +10,15 @@ from typing import Literal
 import dotenv
 import pandas as pd
 
-import pycharts_timescaledb as tsdb
-from pycharts_timescaledb.api_extention import TimescaleDB_EXT
 from broker_apis.alpaca_api import AlpacaAPI
+
+from psyscale import set_psyscale_log_level
+from psyscale.manager import PsyscaleMod
 
 dotenv.load_dotenv(dotenv.find_dotenv())
 
-tsdb.set_timescale_db_log_level("INFO")
-log = logging.getLogger("pycharts-timescaledb")
+set_psyscale_log_level("INFO")
+log = logging.getLogger("psyscale_log")
 
 
 # Used to manually set symbols to download data, Only needs to be called once per symbol
@@ -32,16 +33,15 @@ STRICT_SYMBOL_SEARCH: bool | Literal["ILIKE", "LIKE", "="] = False
 
 async def main():
     on_conflict: Literal["error", "update"] = "update"
-    db = TimescaleDB_EXT()
+    db = PsyscaleMod()
 
     _update_stored_symbols(db)
-
     _import_alpaca(db, on_conflict)
 
     db.refresh_aggregate_metadata()
 
 
-def _update_stored_symbols(db: TimescaleDB_EXT):
+def _update_stored_symbols(db: PsyscaleMod):
     """
     Update the Database to set list of symbols filtered by the above [SYMBOLS_TO_IMPORT]
     filters to 'store_[]=True' so they get imported.
@@ -114,7 +114,7 @@ def _update_stored_symbols(db: TimescaleDB_EXT):
                     log.info("Skipping Symbol")
 
 
-def _import_alpaca(db: TimescaleDB_EXT, on_conflict: Literal["error", "update"]):
+def _import_alpaca(db: PsyscaleMod, on_conflict: Literal["error", "update"]):
     "Select all the Stored Symbols from Alpaca and fetch & store their most recent data"
     alpaca_api = AlpacaAPI()
 

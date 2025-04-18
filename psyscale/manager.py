@@ -17,20 +17,18 @@ from .psql import (
     TimeseriesConfig,
 )
 
-from .api import TimeScaleDB, TupleCursor
+from .client import PsyscaleDB, TupleCursor
 
-log = logging.getLogger("pycharts-timescaledb")
+log = logging.getLogger("psyscale_log")
 
 # pylint: disable='invalid-name','protected-access'
 
 
-class TimescaleDB_EXT(TimeScaleDB):
+class PsyscaleMod(PsyscaleDB):
     """
-    Class Extension to add Configuration and Data Management Functions.
-
-    This class is designed to extend the core functionality to enable one-off scripts,
-    and reoccurring data-management scripts without cluttering the core functionality
-    needed at application runtime.
+    PsyscaleDB class extension for connecting to a PostgreSQL Database in a read/write mode.
+    This class offers additional configuration and data management functions that are not
+    normally needed at runtime.
     """
 
     # region ---- ---- ---- Public Dunder Sub-routines ---- ---- ----

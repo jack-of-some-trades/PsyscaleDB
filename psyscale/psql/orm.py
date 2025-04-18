@@ -31,7 +31,7 @@ DEFAULT_AGGREGATES = [
     Timedelta("1W"),
 ]
 
-log = logging.getLogger("pycharts-timescaledb")
+log = logging.getLogger("psyscale_log")
 
 
 def _get_ensured[T](_dict: dict[str, T | None], key: str, default: T) -> T:

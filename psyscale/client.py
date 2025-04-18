@@ -52,7 +52,7 @@ from .psql import (
 
 # region ----------- Database Structures  -----------
 
-log = logging.getLogger("pycharts-timescaledb")
+log = logging.getLogger("psyscale_log")
 
 # Get the Timescale.yml in the folder this file is stored in.
 DEFAULT_YML_PATH = Path(__file__).parent.joinpath("timescale.yml").as_posix()
@@ -66,20 +66,29 @@ DictCursor: TypeAlias = pg.Cursor[pg_rows.DictRow]
 TupleCursor: TypeAlias = pg.Cursor[pg_rows.TupleRow]
 
 
-class TimeScaleDB:
+class PsyscaleDB:
     """
-    Core Interface between Python and a PostgreSQL Database.
+    A Python client interface for connecting to a PostgreSQL Database in a (mostly) read-only mode.
 
     Timescale DB Docker self-host instructions
     https://docs.timescale.com/self-hosted/latest/install/installation-docker/
 
-    This Class contains all the necessary functionality needed to interact
-    with the Database at Runtime.
+    This class contains all the necessary functionality needed to interact
+    with the Database at runtime. If provided environment variables that point to
+    a local host, the initializer will start/create the docker container as needed.
+
+    This class instance doesn't strictly prohibit write (Insert/Update/Delete) commands. However,
+    it lacks functionality to streamline the symbol and data insertion process. These additional
+    functions are accessible through the PsyscaleMod sub-class.
 
     Additional functionality (Such as one-off configuration scripts, Data Insertion, etc.)
-    are handled by the TimescaleDB_EXT Subclass. This is done to de-clutter the
+    are handled by the PsyscaleMod Subclass. This is done to de-clutter the
     exceedingly large amount of functionality that is needed to manage a Database.
     """
+
+    # This division of labor is done for two reasons.
+    # 1: Separates & Organizes the large amt. of functions so it's not all in a single class
+    # 2: It lazy loads all of that extra functionality, most notably, pandas_market_calendars.
 
     def __init__(
         self,
@@ -87,22 +96,21 @@ class TimeScaleDB:
         docker_compose_fpath: Optional[str] = None,
     ):
         env_params: dict[str, Any] = {
-            "host": os.getenv("TIMESCALE_HOST"),
-            "port": os.getenv("TIMESCALE_PORT"),
-            "user": os.getenv("TIMESCALE_USER"),
-            "dbname": os.getenv("TIMESCALE_DB_NAME"),
-            "password": os.getenv("TIMESCALE_PASSWORD"),
+            "host": os.getenv("PSYSCALE_HOST"),
+            "port": os.getenv("PSYSCALE_PORT"),
+            "user": os.getenv("PSYSCALE_USER"),
+            "dbname": os.getenv("PSYSCALE_DB_NAME"),
+            "password": os.getenv("PSYSCALE_PASSWORD"),
         }
 
         if env_params["host"] in {"localhost", "127.0.0.1"}:
             # Get additional params if using a local database
-            env_params["volume_path"] = os.getenv("TIMESCALE_VOLUME_PATH")
-            env_params["project_name"] = os.getenv("PROJECT_NAME")
+            env_params["volume_path"] = os.getenv("PSYSCALE_VOLUME_PATH")
 
         missing_keys = {key for key, value in env_params.items() if value is None}
         if len(missing_keys) > 0:
             raise AttributeError(
-                f"Cannot instantiate Timescale DB. Missing Environment Variables: {missing_keys} \n"
+                f"Cannot instantiate PsyscaleDB. Missing Environment Variables: {missing_keys} \n"
             )
 
         self.conn_params: dict[str, Any] = {
@@ -313,7 +321,7 @@ class TimeScaleDB:
             subprocess.run(["docker", "--version"], capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
             raise OSError(
-                "Cannot Initialize Local TimescaleDB, OS does not have docker installed."
+                "Cannot Initialize Local PsyscaleDB, OS does not have docker installed."
             ) from e
 
         # Ensure Timescale Image has been pulled.
@@ -328,12 +336,22 @@ class TimeScaleDB:
                 "Docker Images Command Failed, Ensure Docker Engine is Running"
             ) from e
 
+        # The following check may only work on windows...
         if len(p.stdout.decode().strip().split("\n")) <= 1:
             # i.e. STDOut only returned table heading and no rows listing available images.
-            raise OSError(
-                "Missing Necessary TimescaleDB Image to initilize TimescaleDB(). \n"
-                "Execute 'docker pull timescale/timescaledb-ha:pg17' in a terminal"
+            log.warning(
+                "Missing required TimescaleDB Image. Pulling Docker Image: %s",
+                TIMESCALE_IMAGE,
             )
+            try:
+                p = subprocess.run(
+                    ["docker", "pull", TIMESCALE_IMAGE],
+                    capture_output=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as e:
+                raise OSError("Could not pull Docker Image.") from e
+            log.info("Successfully pulled Docker Image")
 
         if vol_path and not os.path.exists(vol_path):
             log.info("Making Database Volume Folder at : %s", vol_path)

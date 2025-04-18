@@ -287,7 +287,7 @@ wheels = [
 ]
 
 [[package]]
-name = "pycharts-timescaledb"
+name = "psyscale"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [

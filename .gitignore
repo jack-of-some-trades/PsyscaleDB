@@ -12,7 +12,7 @@
 __pycache__
 
 # Development Testing Code #
-/scripts/test.py
+/examples/test.py
 
 # Packages #
 ############

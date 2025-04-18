@@ -3,15 +3,16 @@
 import dotenv
 from pandas import Timedelta, Timestamp
 
-import pycharts_timescaledb as tsdb
-from pycharts_timescaledb.api_extention import TimescaleDB_EXT
+from psyscale import set_psyscale_log_level
+from psyscale.dev import TimeseriesConfig, DEFAULT_AGGREGATES
+from psyscale.manager import PsyscaleMod
 
-tsdb.set_timescale_db_log_level("INFO")
+set_psyscale_log_level("INFO")
 
 
 def main():
     dotenv.load_dotenv(dotenv.find_dotenv())
-    db = TimescaleDB_EXT()
+    db = PsyscaleMod()
 
     db.configure_timeseries_schema(
         minute_tables=STD_MINUTE_CONFIG,
@@ -26,7 +27,7 @@ def main():
 STD_ASSET_LIST = ["us_fund", "us_stock", "crypto"]
 
 # Minute Schema Imports Minute Data and Aggreagtes higher Timeframe information
-STD_MINUTE_CONFIG = tsdb.TimeseriesConfig(
+STD_MINUTE_CONFIG = TimeseriesConfig(
     STD_ASSET_LIST,
     rth_origins={
         "us_stock": Timestamp("2000/01/03 08:30", tz="America/New_York"),
@@ -37,7 +38,7 @@ STD_MINUTE_CONFIG = tsdb.TimeseriesConfig(
         "us_fund": Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"us_stock": True, "us_fund": True},
-    aggregate_periods={"default": tsdb.DEFAULT_AGGREGATES},
+    aggregate_periods={"default": DEFAULT_AGGREGATES},
     inserted_aggregate_periods={"default": [Timedelta("1m")]},
 )
 
@@ -48,10 +49,10 @@ STD_TICK_PERIODS = [
     Timedelta("30sec"),
     Timedelta("1min"),
 ]
-STD_TICK_PERIODS.extend(tsdb.DEFAULT_AGGREGATES)
+STD_TICK_PERIODS.extend(DEFAULT_AGGREGATES)
 
 # Tick Schema imports Tick Data and Aggregates HTF Data
-STD_TICK_CONFIG = tsdb.TimeseriesConfig(
+STD_TICK_CONFIG = TimeseriesConfig(
     STD_ASSET_LIST,
     rth_origins={
         "us_stock": Timestamp("2000/01/03 08:30", tz="America/New_York"),
@@ -68,7 +69,7 @@ STD_TICK_CONFIG = tsdb.TimeseriesConfig(
 
 # Aggregate Schema only imports aggregate data. Useful when Higher Timeframe
 # Data extends further back in time than lower timeframe data.
-STD_AGGREGATE_CONFIG = tsdb.TimeseriesConfig(
+STD_AGGREGATE_CONFIG = TimeseriesConfig(
     STD_ASSET_LIST,
     rth_origins={
         "us_stock": Timestamp("2000/01/03 08:30", tz="America/New_York"),
@@ -80,7 +81,7 @@ STD_AGGREGATE_CONFIG = tsdb.TimeseriesConfig(
     },
     prioritize_rth={"us_stock": True, "us_fund": True},
     aggregate_periods={"default": []},
-    inserted_aggregate_periods={"default": [Timedelta("1m")] + tsdb.DEFAULT_AGGREGATES},
+    inserted_aggregate_periods={"default": [Timedelta("1m")] + DEFAULT_AGGREGATES},
 )
 
 # endregion

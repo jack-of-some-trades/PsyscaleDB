@@ -11,10 +11,7 @@ from typing import Dict, Optional
 import pandas as pd
 import pandas_market_calendars as mcal
 
-import pycharts_timescaledb as tsdb
-
-tsdb.set_timescale_db_log_level("DEBUG")
-log = logging.getLogger("pycharts-timescaledb")
+log = logging.getLogger("psyscale_log")
 
 # Trading Hours Integer Encoding
 EXT_MAP = {

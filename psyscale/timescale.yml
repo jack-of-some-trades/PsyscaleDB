@@ -1,14 +1,14 @@
-name: ${PROJECT_NAME}
+name: PsyscaleDB
 
 services:
   TimescaleDB:
     image: timescale/timescaledb-ha:pg17
     ports:
-      - "${TIMESCALE_PORT}:5432"
+      - "${PSYSCALE_PORT}:5432"
     environment:
-      POSTGRES_USER: ${TIMESCALE_USER}
-      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
-      POSTGRES_DB: ${TIMESCALE_DB_NAME}
+      POSTGRES_USER: ${PSYSCALE_USER}
+      POSTGRES_PASSWORD: ${PSYSCALE_PASSWORD}
+      POSTGRES_DB: ${PSYSCALE_DB_NAME}
     volumes:
       - TimescaleData:/home/postgres/pgdata/data
     networks:
@@ -21,7 +21,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${TIMESCALE_VOLUME_PATH}
+      device: ${PSYSCALE_VOLUME_PATH}
 
 networks:
   database:

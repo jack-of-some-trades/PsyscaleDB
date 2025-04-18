@@ -1,4 +1,3 @@
-TimescaleDB Extention for Lightweight-Pycharts.
-Designed to store Timeseries Data Locally and join the data upon retrieval
+PsyscaleDB is a lightweight Python library designed for efficient storage, querying, and management of financial timeseries data using a TimescaleDB-accelerated PostgreSQL backend. Built on top of psycopg and tightly integrated with pandas, it offers a simplified interface for working with financial timeseries datasets in the form of DataFrames. 
 
-Requires Docker with the TimescaleDB Image Downloaded. For the version needed, check the timescale.yml file included.
+Designed for flexibility, the library leaves the backend database open for direct manipulation via psycopg commands whenever desired.

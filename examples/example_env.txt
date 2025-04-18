@@ -1,0 +1,19 @@
+# Psyscale Database Connection Parameters
+PSYSCALE_PORT = ""
+PSYSCALE_HOST = ""
+PSYSCALE_USER = ""
+PSYSCALE_DB_NAME = ""
+PSYSCALE_PASSWORD = ""
+
+# Volume Path is only referenced when creating a local database 
+# instance using the provided docker .yaml file 
+PSYSCALE_VOLUME_PATH = "" 
+
+#Alpaca Data Broker API
+ALPACA_API_URL = "https://paper-api.alpaca.markets" 
+ALPACA_API_KEY = ""
+ALPACA_API_SECRET_KEY = ""
+
+#Polygon Data Broker API
+POLYGON_API_USER = ""
+POLYGON_API_KEY = ""
