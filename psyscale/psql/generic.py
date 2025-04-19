@@ -141,30 +141,46 @@ def create_schema(schema: str) -> sql.Composed:
     )
 
 
-def drop_schema(schema: str) -> sql.Composed:
-    return sql.SQL("DROP SCHEMA IF EXISTS {schema_name} CASCADE;").format(
-        schema_name=sql.Identifier(schema),
-    )
-
-
-def drop_table(schema: str, table: str) -> sql.Composed:
-    return sql.SQL("DROP TABLE IF EXISTS {schema_name}.{table_name} CASCADE;").format(
-        schema_name=sql.Identifier(schema),
-        table_name=sql.Identifier(table),
-    )
-
-
-def drop_materialized_view(schema: str, table: str) -> sql.Composed:
+def drop_schema(schema: str, cascade: bool = True) -> sql.Composed:
     return sql.SQL(
-        "DROP MATERIALIZED VIEW IF EXISTS {schema_name}.{table_name} CASCADE;"
+        "DROP SCHEMA IF EXISTS {schema_name}" + " CASCADE" if cascade else "" + ";"
+    ).format(
+        schema_name=sql.Identifier(schema),
+    )
+
+
+def drop_table(schema: str, table: str, cascade: bool = True) -> sql.Composed:
+    return sql.SQL(
+        "DROP TABLE IF EXISTS {schema_name}.{table_name}" + " CASCADE"
+        if cascade
+        else "" + ";"
     ).format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(table),
     )
 
 
-def delete_items(schema: str, table: str, filters: list[Filter]) -> sql.Composed:
-    return sql.SQL("DELETE FROM {schema_name}.{table_name} {filter} CASCADE;").format(
+def drop_materialized_view(
+    schema: str, table: str, cascade: bool = True
+) -> sql.Composed:
+    return sql.SQL(
+        "DROP MATERIALIZED VIEW IF EXISTS {schema_name}.{table_name}" + " CASCADE"
+        if cascade
+        else "" + ";"
+    ).format(
+        schema_name=sql.Identifier(schema),
+        table_name=sql.Identifier(table),
+    )
+
+
+def delete(
+    schema: str, table: str, filters: list[Filter], cascade: bool = True
+) -> sql.Composed:
+    return sql.SQL(
+        "DELETE FROM {schema_name}.{table_name} {filter}" + " CASCADE"
+        if cascade
+        else "" + ";"
+    ).format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(table),
         filter=where(filters),

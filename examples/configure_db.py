@@ -28,7 +28,7 @@ STD_ASSET_LIST = ["us_fund", "us_stock", "crypto"]
 
 # Minute Schema Imports Minute Data and Aggreagtes higher Timeframe information
 STD_MINUTE_CONFIG = TimeseriesConfig(
-    STD_ASSET_LIST,
+    STD_ASSET_LIST,  # type:ignore
     rth_origins={
         "us_stock": Timestamp("2000/01/03 08:30", tz="America/New_York"),
         "us_fund": Timestamp("2000/01/03 08:30", tz="America/New_York"),
@@ -53,7 +53,7 @@ STD_TICK_PERIODS.extend(DEFAULT_AGGREGATES)
 
 # Tick Schema imports Tick Data and Aggregates HTF Data
 STD_TICK_CONFIG = TimeseriesConfig(
-    STD_ASSET_LIST,
+    STD_ASSET_LIST,  # type:ignore
     rth_origins={
         "us_stock": Timestamp("2000/01/03 08:30", tz="America/New_York"),
         "us_fund": Timestamp("2000/01/03 08:30", tz="America/New_York"),
@@ -70,7 +70,7 @@ STD_TICK_CONFIG = TimeseriesConfig(
 # Aggregate Schema only imports aggregate data. Useful when Higher Timeframe
 # Data extends further back in time than lower timeframe data.
 STD_AGGREGATE_CONFIG = TimeseriesConfig(
-    STD_ASSET_LIST,
+    STD_ASSET_LIST,  # type:ignore
     rth_origins={
         "us_stock": Timestamp("2000/01/03 08:30", tz="America/New_York"),
         "us_fund": Timestamp("2000/01/03 08:30", tz="America/New_York"),

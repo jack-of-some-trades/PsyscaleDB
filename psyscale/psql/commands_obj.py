@@ -112,7 +112,7 @@ OPERATION_MAP: OperationMap = {
         AssetTbls._METADATA: sec.select_timeseries_metadata,
     },
     Operation.DELETE: {
-        GenericTbls.TABLE: gen.delete_items,
+        GenericTbls.TABLE: gen.delete,
         SeriesTbls._ORIGIN: ts.delete_origin,
     },
     Operation.DROP: {

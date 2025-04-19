@@ -61,12 +61,3 @@ class AssetTbls(StrEnum):
     # SPLITS = auto()
     # DIVIDENDS = auto()
     # EARNINGS = auto()
-
-
-class UserTbls(StrEnum):
-    "TBD Tables for storing various user data"
-
-    USER_TABLE = auto()
-    WATCHLIST = auto()
-    PRIMITIVES = auto()
-    INDICATOR = auto()
