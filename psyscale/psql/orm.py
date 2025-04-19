@@ -172,6 +172,11 @@ class AssetTable:
         return self._table_name
 
     @property
+    def has_rth(self) -> bool:
+        "Whether or not the table contains a 'rth'::SMALLINT column or not"
+        return self.ext and not self.rth
+
+    @property
     def origin_ts(self) -> Timestamp:
         if self.period < Timedelta("4W"):
             return DEFAULT_ORIGIN_DATE if self._origin_ltf is None else self._origin_ltf
@@ -656,7 +661,7 @@ class TimeseriesConfig:
 
         asset_classes = {table.asset_class for table in tables}
 
-        cls_inst = cls(asset_classes)
+        cls_inst = cls(asset_classes)  # type:ignore
 
         # Reconstruct the std, raw, eth, and inserted table dictionaries.
         for asset_class in asset_classes:

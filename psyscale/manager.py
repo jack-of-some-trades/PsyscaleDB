@@ -273,7 +273,7 @@ class PsyscaleMod(PsyscaleDB):
                 assert not series_df.df["price"].isna().any()
 
             # Regardless if Tick or aggregate, check the 'rth' to be NOT NULL when needed.
-            if table.ext and table.rth is None:
+            if table.has_rth:
                 assert "rth" in series_df.columns
                 if (nans := series_df.df["rth"].isna()).any():
                     drops = series_df.df[nans]
@@ -283,6 +283,17 @@ class PsyscaleMod(PsyscaleDB):
                         drops,
                     )
                     series_df.df = series_df.df[~nans]
+            elif "rth" in series_df.columns:
+                extra_rows = series_df.df["rth"] != 0
+                if len(extra_rows) > 0:
+                    log.warning(
+                        "Given Extended hours data to an aggregate table that doesn't need it."
+                        "Dropping extra data rows : %s",
+                        extra_rows,
+                    )
+                    # drop all ext hours datapoints
+                    series_df.df = series_df.df[~extra_rows]
+                series_df.df.drop(columns="rth")
 
             assert "dt" in series_df.columns
             assert not series_df.df["dt"].isna().any()

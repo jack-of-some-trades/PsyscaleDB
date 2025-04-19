@@ -155,7 +155,7 @@ def create_tick_table(schema: str, table: AssetTable) -> sql.Composed:
         CREATE TABLE {schema_name}.{table_name} (
             pkey INTEGER NOT NULL,
             dt TIMESTAMPTZ NOT NULL,"""
-        + (" rth SMALLINT not NULL," if table.ext and table.rth is None else "")
+        + (" rth SMALLINT not NULL," if table.has_rth else "")
         + """
             price DOUBLE PRECISION NOT NULL,
             volume DOUBLE PRECISION, 
@@ -186,7 +186,7 @@ def create_continuous_tick_aggregate(
         SELECT 
             time_bucket({interval}, dt, TIMESTAMPTZ {origin}) as dt,
             pkey,"""
-        + ("    first(rth, dt) AS rth," if table.ext and table.rth is None else "")
+        + ("    first(rth, dt) AS rth," if table.has_rth else "")
         + """
             first(price, dt) AS open,
             last(price, dt) AS close,
@@ -214,23 +214,25 @@ def create_continuous_tick_aggregate(
     )
 
 
-def _error_check_continuous_aggrigate(table: AssetTable, ref_table: AssetTable):
-    if table.ext != ref_table.ext:
+def _error_check_continuous_aggrigate(table: AssetTable, src_table: AssetTable):
+    if table.ext != src_table.ext:
+        # One table has extended hours information, the other doesn't
         raise AttributeError(
             "EXT Data mismatched between reference and continuous aggregate tables.\n"
-            f"Desired Aggregate Table: {table}, Reference Table: {ref_table}"
+            f"Desired Aggregate Table: {table}, Reference Table: {src_table}"
         )
-    if not ref_table.ext or ref_table.rth is None:
-        return
+    if not src_table.ext or src_table.rth is None:
+        return  # either ext = None for both, or src_table has all ext information needed
     if table.rth is None:  # ref_table.rth == True or False
+        # Trying to get more refined ext information out of src_table than what is possible
         raise AttributeError(
             "Cannot create an Aggregate table with an rth column from a table with an rth column."
-            f"Desired Aggregate Table: {table}, Reference Table: {ref_table}"
+            f"Desired Aggregate Table: {table}, Reference Table: {src_table}"
         )
-    if ref_table.rth != table.rth:
+    if src_table.rth != table.rth:
         raise AttributeError(
             "Cannot create an RTH Aggregate from an ETH aggregate and vise versa."
-            f"Desired Aggregate Table: {table}, Reference Table: {ref_table}"
+            f"Desired Aggregate Table: {table}, Reference Table: {src_table}"
         )
 
 
@@ -255,7 +257,7 @@ def create_raw_tick_buffer(table: AssetTable) -> sql.Composed:
         """
         CREATE TEMP TABLE _tick_buffer (
             dt TIMESTAMPTZ NOT NULL,"""
-        + (" rth SMALLINT not NULL," if table.ext and table.rth is None else "")
+        + (" rth SMALLINT not NULL," if table.has_rth else "")
         + """
             price DOUBLE PRECISION NOT NULL,
             volume DOUBLE PRECISION DEFAULT NULL
@@ -272,7 +274,7 @@ def copy_ticks(args: list[str]) -> sql.Composed:
 
 def insert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Composed:
     "No Conflict Statement since Inserted Data Ideally should be only new data."
-    if table.ext and table.rth is None:
+    if table.has_rth:
         return sql.SQL(
             """
             INSERT INTO {schema_name}.{table_name} (pkey, dt, rth, price, volume) 
@@ -298,7 +300,7 @@ def insert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Compos
 
 def upsert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Composed:
     "Not Intended to be used as often as INSERT Operation since this requires a CONTINUOUS AGG REFRESH"
-    if table.ext and table.rth is None:
+    if table.has_rth:
         return sql.SQL(
             """
             INSERT INTO {schema_name}.{table_name} (pkey, dt, rth, price, volume) 
@@ -344,7 +346,7 @@ def create_raw_aggregate_table(schema: str, table: AssetTable) -> sql.Composed:
         CREATE TABLE {schema_name}.{table_name} (
             pkey INTEGER NOT NULL,
             dt TIMESTAMPTZ NOT NULL,"""
-        + (" rth SMALLINT NOT NULL," if table.ext and table.rth is None else "")
+        + (" rth SMALLINT NOT NULL," if table.has_rth else "")
         + """
             close DOUBLE PRECISION NOT NULL,
             open DOUBLE PRECISION,
@@ -379,7 +381,7 @@ def create_continuous_aggrigate(
         SELECT 
             time_bucket({interval}, dt, TIMESTAMPTZ {origin}) as dt,
             pkey,"""
-        + ("    first(rth, dt) AS rth," if table.ext and table.rth is None else "")
+        + ("    first(rth, dt) AS rth," if table.has_rth else "")
         + """
             first(open, dt) AS open,
             last(close, dt) AS close,
@@ -415,7 +417,7 @@ def create_raw_agg_buffer(table: AssetTable) -> sql.Composed:
         """
         CREATE TEMP TABLE _aggregate_buffer (
             dt TIMESTAMPTZ NOT NULL,"""
-        + (" rth SMALLINT NOT NULL," if table.ext and table.rth is None else "")
+        + (" rth SMALLINT NOT NULL," if table.has_rth else "")
         + """
             close DOUBLE PRECISION NOT NULL,
             open DOUBLE PRECISION DEFAULT NULL,
@@ -436,7 +438,7 @@ def copy_aggregates(args: list[str]) -> sql.Composed:
 
 
 def insert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.Composed:
-    if table.ext and table.rth is None:
+    if table.has_rth:
         return sql.SQL(
             """
             INSERT INTO {schema_name}.{table_name} (pkey, dt, rth, close, open, high, low, volume, vwap, ticks) 
@@ -462,7 +464,7 @@ def insert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.C
 
 def upsert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.Composed:
     "Not Intended to be used as often as INSERT Operation since this requires a CONTINUOUS AGG REFRESH"
-    if table.ext and table.rth is None:
+    if table.has_rth:
         return sql.SQL(
             """
             INSERT INTO {schema_name}.{table_name} (pkey, dt, rth, close, open, high, low, volume, vwap, ticks) 
@@ -579,11 +581,10 @@ def calculate_aggregates(
     if end is not None:
         _filters.append(("dt", "<", end))
 
-    ext_tbl = src_table.ext and src_table.rth is None
-    if ext_tbl and rth:
+    if src_table.has_rth and rth:
         # Filter by rth if accessing a table that has both rth and eth
         _filters.append(("rth", "=", 0))
-    if not ext_tbl and "rth" in rtn_args:
+    if not src_table.has_rth and "rth" in rtn_args:
         # 'rth' Doesn't exist in the table we are selecting from.
         rtn_args.remove("rth")
 
