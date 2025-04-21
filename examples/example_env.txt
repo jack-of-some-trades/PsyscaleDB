@@ -1,12 +1,16 @@
 # Psyscale Database Connection Parameters
-PSYSCALE_PORT = ""
-PSYSCALE_HOST = ""
-PSYSCALE_USER = ""
-PSYSCALE_DB_NAME = ""
-PSYSCALE_PASSWORD = ""
+PSYSCALE_URL = ""
+# ** or **
+PSYSCALE_HOST = "" # Defaults to 'localhost'
+PSYSCALE_PORT = "" # Defaults to 5432
+PSYSCALE_USER = "" # Optional
+PSYSCALE_DB_NAME = "" # Optional
+PSYSCALE_PASSWORD = "" # Optional
+PSYSCALE_SSLMODE = "" # Optional
+PSYSCALE_APP_NAME = "" # Optional
 
 # Volume Path is only referenced when creating a local database 
-# instance using the provided docker .yaml file 
+# Init will generate the dir as needed, the provided docker .yaml file mounts to this folder
 PSYSCALE_VOLUME_PATH = "" 
 
 #Alpaca Data Broker API

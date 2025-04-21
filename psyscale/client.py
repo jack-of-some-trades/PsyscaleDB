@@ -1,5 +1,6 @@
 """An interface for reading and commiting data to a database"""
 
+from dataclasses import dataclass, field
 from enum import StrEnum
 from itertools import chain
 import logging
@@ -18,10 +19,12 @@ from typing import (
     Mapping,
     Optional,
     Any,
+    Self,
     Tuple,
     TypeAlias,
     overload,
 )
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from pandas import DataFrame, Timedelta, Timestamp
 
 import psycopg as pg
@@ -66,6 +69,92 @@ DictCursor: TypeAlias = pg.Cursor[pg_rows.DictRow]
 TupleCursor: TypeAlias = pg.Cursor[pg_rows.TupleRow]
 
 
+@dataclass
+class PsyscaleConnectParams:
+    "Dataclass to derive and store Postgres Database Connection Parameters"
+
+    host: str
+    port: int
+    user: str
+    password: str
+    database: str
+    sslmode: Optional[str] = None
+    application_name: Optional[str] = None
+    volume_path: Optional[str] = None
+    url: str = field(init=False)
+
+    @property
+    def is_local(self) -> bool:
+        "Return true when connection points to a local host"
+        return self.host in {"localhost", "127.0.0.1", "::1"}
+
+    def __post_init__(self):
+        "Format Params into formatted URL."
+        user_info = ""
+        if self.user:
+            user_info += quote_plus(self.user)
+            if self.password:
+                user_info += f":{quote_plus(self.password)}"
+            user_info += "@"
+
+        query_params = []
+        if self.sslmode:
+            query_params.append(f"sslmode={quote_plus(self.sslmode)}")
+        if self.application_name:
+            query_params.append(f"application_name={quote_plus(self.application_name)}")
+        query_str = f"?{'&'.join(query_params)}" if query_params else ""
+
+        self.url = f"postgresql://{user_info}{self.host}:{self.port}/{self.database}{query_str}"
+        log.info(self.url)
+
+    @classmethod
+    def from_url(cls, url: str) -> Self:
+        "Parses a PostgreSQL connection URL into a PsyscaleConnectParams instance."
+        parsed = urlparse(url)
+        query = parse_qs(parsed.query)
+
+        if parsed.scheme not in ("postgres", "postgresql"):
+            raise ValueError(
+                f"Invalid URL scheme '{parsed.scheme}'. Expected 'postgres' or 'postgresql'."
+            )
+
+        return cls(
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 5432,
+            user=unquote(parsed.username) if parsed.username else "",
+            password=unquote(parsed.password) if parsed.password else "",
+            database=parsed.path.lstrip("/") if parsed.path else "",
+            sslmode=query.get("sslmode", [None])[0],
+            application_name=query.get("application_name", [None])[0],
+        )
+
+    @classmethod
+    def from_env(cls) -> Self:
+        """
+        Return a PsyscaleConnectParams instance from environment variables parameters.
+        Note: This function does not search for and load env variables from a .env, it only
+        tries to pull the variables from the currently loaded environment variables.
+        """
+        if url := os.getenv("PSYSCALE_URL"):
+            inst = cls.from_url(url)
+        else:
+            inst = cls(
+                host=os.getenv("PSYSCALE_HOST") or "localhost",
+                port=int(os.getenv("PSYSCALE_PORT") or 5432),
+                user=os.getenv("PSYSCALE_USER") or "",
+                database=os.getenv("PSYSCALE_DB_NAME") or "",
+                password=os.getenv("PSYSCALE_PASSWORD") or "",
+                sslmode=os.getenv("PSYSCALE_SSLMODE"),
+                application_name=os.getenv("PSYSCALE_APP_NAME"),
+            )
+
+        if inst.is_local:
+            # Get additional params if using a local database
+            inst.volume_path = os.getenv("PSYSCALE_VOLUME_PATH")
+
+        return inst
+
+
 class PsyscaleDB:
     """
     A Python client interface for connecting to a PostgreSQL Database in a (mostly) read-only mode.
@@ -92,48 +181,25 @@ class PsyscaleDB:
 
     def __init__(
         self,
+        conn_params: Optional[PsyscaleConnectParams] = None,
         *,
         docker_compose_fpath: Optional[str] = None,
     ):
-        env_params: dict[str, Any] = {
-            "host": os.getenv("PSYSCALE_HOST"),
-            "port": os.getenv("PSYSCALE_PORT"),
-            "user": os.getenv("PSYSCALE_USER"),
-            "dbname": os.getenv("PSYSCALE_DB_NAME"),
-            "password": os.getenv("PSYSCALE_PASSWORD"),
-        }
+        if conn_params is None:
+            conn_params = PsyscaleConnectParams.from_env()
 
-        if env_params["host"] in {"localhost", "127.0.0.1"}:
-            # Get additional params if using a local database
-            env_params["volume_path"] = os.getenv("PSYSCALE_VOLUME_PATH")
-
-        missing_keys = {key for key, value in env_params.items() if value is None}
-        if len(missing_keys) > 0:
-            raise AttributeError(
-                f"Cannot instantiate PsyscaleDB. Missing Environment Variables: {missing_keys} \n"
-            )
-
-        self.conn_params: dict[str, Any] = {
-            k: env_params[k] for k in ("user", "password", "dbname", "host", "port")
-        }
-
-        _local = self.conn_params["host"] in {"localhost", "127.0.0.1"}
-        _timeout = LOCAL_POOL_GEN_TIMEOUT if _local else POOL_GEN_TIMEOUT
+        _timeout = LOCAL_POOL_GEN_TIMEOUT if conn_params.is_local else POOL_GEN_TIMEOUT
 
         try:
-            self.pool = ConnectionPool(
-                kwargs=self.conn_params, open=False, timeout=_timeout
-            )
+            self.pool = ConnectionPool(conn_params.url, open=False, timeout=_timeout)
             self.pool.open(timeout=_timeout)
             log.debug("Health_check: %s", "good" if self._health_check() else "bad")
         except PoolTimeout as e:
-            if not _local:
-                raise e  # Give some more informative info here?
+            if not conn_params.is_local:
+                raise e
 
             # Try and start the local database, give extra buffer on the timeout.
-            self._init_and_start_localdb(
-                docker_compose_fpath, env_params["volume_path"]
-            )
+            self._init_and_start_localdb(docker_compose_fpath, conn_params.volume_path)
             with self.pool.connection(timeout=2.5) as conn:
                 conn._check_connection_ok()
 
@@ -141,24 +207,9 @@ class PsyscaleDB:
             raise e  # Give some more informative info here?
 
         self.cmds = Commands()
+        self.conn_params = conn_params
         self._ensure_securities_schema_format()
         self._read_db_timeseries_config()
-
-    def __del__(self):
-        "DEL overload to stop the Docker Container so it isn't always running."
-        #     if (
-        #         not self.__stopdb_on_shutdown__
-        #         or self.config["host"] not in {"localhost", "127.0.0.1"}
-        #         or getattr(self, "yml_path", None) is None
-        #     ):
-        #         return
-
-        #     subprocess.run(
-        #         ["docker-compose", "-f", self.yml_path, "stop"],
-        #         stdout=subprocess.DEVNULL,  # Capturing output can cause process to hang
-        #         stderr=subprocess.DEVNULL,
-        #         check=False,
-        #     )
 
     def __getitem__(self, args: Tuple[Op, StrEnum]) -> Callable[..., sql.Composed]:
         "Accessor forwarder for the self.cmds object"
@@ -253,40 +304,42 @@ class PsyscaleDB:
     @overload
     def execute(
         self,
-        operation: Op,
-        table: StrEnum,
-        fmt_args: Mapping[str, Any] = {},
+        cmd: sql.Composed,
         exec_args: Optional[Mapping[str, int | float | str | None]] = None,
         dict_cursor: Literal[False] = False,
-    ) -> Tuple[List[Tuple], str]: ...
+    ) -> Tuple[List[Tuple], str | None]: ...
     @overload
     def execute(
         self,
-        operation: Op,
-        table: StrEnum,
-        fmt_args: Mapping[str, Any] = {},
+        cmd: sql.Composed,
         exec_args: Optional[Mapping[str, int | float | str | None]] = None,
         dict_cursor: Literal[True] = True,
-    ) -> Tuple[List[Dict], str]: ...
+    ) -> Tuple[List[Dict], str | None]: ...
 
     def execute(
         self,
-        operation: Op,
-        table: StrEnum,
-        fmt_args: Mapping[str, Any] = {},
+        cmd: sql.Composed,
         exec_args: Optional[Mapping[str, int | float | str | None]] = None,
         dict_cursor: bool = False,
-    ) -> Tuple[List[Dict] | List[Tuple], str]:
-        "Execution Method to manually invoke a command within the database."
+    ) -> Tuple[List[Dict] | List[Tuple], str | None]:
+        """
+        Execution Method to manually invoke a command within the database.
 
-        if operation not in self.cmds.operation_map:
-            log.error("Unknown Operation: %s", operation)
-            return [], "CMD_ERROR"
-        if table not in self.cmds.operation_map[operation]:
-            log.error("Unknown Operation Table Pair: %s:%s", operation, table)
-            return [], "CMD_ERROR"
+        -- PARAMS --
+        - cmd : sql.Composed
+            - Composed SQL function using psycopg.sql sub-module
+        - exec_args : Optional Mapping
+            - When supplied, exec_args will be passed to the cursor and used to populate
+            any placeholder args within the formatted command.
+        - dict_cursor : boolean
+            - When true will return any results as a list of dicts where each item in
+            the list is a row of the returned table.
+            - When false a list of Tuples per row is returned.
 
-        cmd = self[operation, table](**fmt_args)
+        -- RETURNS --
+        Tuple[ List[] , str ] ==> Tuple of query results (if any) and the cursor status
+        message returned as a string.
+        """
         with self._cursor(dict_cursor) as cursor:
             try:
                 log.debug("Executing PSQL Command: %s", cmd.as_string(cursor))
@@ -299,7 +352,7 @@ class PsyscaleDB:
                     stack()[1].function,
                     e,
                 )
-                return [], str(cursor.statusmessage)
+                return [], cursor.statusmessage
 
             response = []
             pgr = cursor.pgresult
@@ -307,7 +360,7 @@ class PsyscaleDB:
             if pgr is not None and pgr.status == ExecStatus.TUPLES_OK:
                 response = cursor.fetchall()
 
-            return response, str(cursor.statusmessage)
+            return response, cursor.statusmessage
 
     # endregion
 
@@ -333,7 +386,7 @@ class PsyscaleDB:
             )
         except subprocess.CalledProcessError as e:
             raise OSError(
-                "Docker Images Command Failed, Ensure Docker Engine is Running"
+                "Failed to Read Installed Docker Images, Ensure Docker Engine is Running"
             ) from e
 
         # The following check may only work on windows...

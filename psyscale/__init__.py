@@ -5,13 +5,14 @@ in a TimescaleDB optimized Postgres Database.
 
 import logging
 from typing import Literal
-from .client import PsyscaleDB
+from .client import PsyscaleDB, PsyscaleConnectParams
 
 # Not Importing .manager to preserve lazy loading
 # from .manager import PsyscaleMod
 
 __all__ = (
     "PsyscaleDB",
+    "PsyscaleConnectParams",
     "set_psyscale_log_level",
 )
 

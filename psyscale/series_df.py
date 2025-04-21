@@ -192,7 +192,6 @@ ALT_EXCHANGE_NAMES = {
 
 class Calendars:
     """
-    Distilled version of Calendars class from lightweight_pycharts.
     Class abstracts and contains the functionality of pandas_market_calendars.
 
     Instantiating only a single instance reduces unnecessary redundancy by making
