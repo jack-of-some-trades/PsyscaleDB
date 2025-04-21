@@ -31,13 +31,12 @@ SYMBOLS_TO_IMPORT = [
 STRICT_SYMBOL_SEARCH: bool | Literal["ILIKE", "LIKE", "="] = False
 
 
-async def main():
+def main():
     on_conflict: Literal["error", "update"] = "update"
     db = PsyscaleMod()
 
     _update_stored_symbols(db)
     _import_alpaca(db, on_conflict)
-
     db.refresh_aggregate_metadata()
 
 
@@ -174,7 +173,4 @@ def _import_alpaca(db: PsyscaleMod, on_conflict: Literal["error", "update"]):
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    main()

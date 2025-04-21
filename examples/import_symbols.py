@@ -1,7 +1,6 @@
 "Script to Inject Symbols from Broker APIs"
 
 # pylint: disable='missing-function-docstring'
-import asyncio
 import logging
 from typing import Literal
 
@@ -18,7 +17,7 @@ set_psyscale_log_level("INFO")
 log = logging.getLogger("psyscale_log")
 
 
-async def main():
+def main():
     on_conflict: Literal["ignore", "update"] = "update"
     db = PsyscaleMod()
 
@@ -87,7 +86,4 @@ def _import_alpaca(db: PsyscaleMod, on_conflict: Literal["ignore", "update"]):
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    main()
