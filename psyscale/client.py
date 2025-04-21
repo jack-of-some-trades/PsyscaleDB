@@ -44,6 +44,7 @@ from .psql import (
     MetadataInfo,
     GenericTbls,
     Operation as Op,
+    OperationMap,
     Schema,
     AssetTbls,
     SeriesTbls,
@@ -215,17 +216,14 @@ class PsyscaleDB:
         "Accessor forwarder for the self.cmds object"
         return self.cmds[args]
 
+    def merge_operations(self, _map: OperationMap):
+        "Merge additional operations into the Database's stored SQL Command Map"
+        self.cmds.merge_operations(_map)
+
     # region ----------- Connection & Cursor Methods -----------
 
-    def _health_check(self) -> bool:
-        "Simple Ping to the Database to ensure it is alive"
-        with self._cursor() as cursor:
-            cursor.execute("SELECT 1")
-            rsp = cursor.fetchall()
-            return rsp[0][0] == 1
-        return False
+    # region -- Cursor & Execute Overloading ---
 
-    # region -- Cursor Overloading ---
     @overload
     @contextmanager
     def _cursor(
@@ -253,6 +251,21 @@ class PsyscaleDB:
         pipeline: bool = False,
         auto_commit: bool = False,
     ) -> Iterator[TupleCursor]: ...
+
+    @overload
+    def execute(
+        self,
+        cmd: sql.Composed,
+        exec_args: Optional[Mapping[str, int | float | str | None]] = None,
+        dict_cursor: Literal[False] = False,
+    ) -> Tuple[List[Tuple], str | None]: ...
+    @overload
+    def execute(
+        self,
+        cmd: sql.Composed,
+        exec_args: Optional[Mapping[str, int | float | str | None]] = None,
+        dict_cursor: Literal[True] = True,
+    ) -> Tuple[List[Dict], str | None]: ...
 
     # endregion
 
@@ -301,21 +314,6 @@ class PsyscaleDB:
 
             self.pool.putconn(conn)
 
-    @overload
-    def execute(
-        self,
-        cmd: sql.Composed,
-        exec_args: Optional[Mapping[str, int | float | str | None]] = None,
-        dict_cursor: Literal[False] = False,
-    ) -> Tuple[List[Tuple], str | None]: ...
-    @overload
-    def execute(
-        self,
-        cmd: sql.Composed,
-        exec_args: Optional[Mapping[str, int | float | str | None]] = None,
-        dict_cursor: Literal[True] = True,
-    ) -> Tuple[List[Dict], str | None]: ...
-
     def execute(
         self,
         cmd: sql.Composed,
@@ -361,6 +359,14 @@ class PsyscaleDB:
                 response = cursor.fetchall()
 
             return response, cursor.statusmessage
+
+    def _health_check(self) -> bool:
+        "Simple Ping to the Database to ensure it is alive"
+        with self._cursor() as cursor:
+            cursor.execute("SELECT 1")
+            rsp = cursor.fetchall()
+            return rsp[0][0] == 1
+        return False
 
     # endregion
 
