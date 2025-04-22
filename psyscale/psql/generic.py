@@ -40,9 +40,9 @@ def limit(val: Optional[str | int]) -> sql.Composable:
     if val is None:
         return sql.SQL("")
     if isinstance(val, int):
-        return sql.SQL(" LIMIT {val} ").format(val=sql.Literal(val))
+        return sql.SQL(" LIMIT {val}").format(val=sql.Literal(val))
     else:
-        return sql.SQL(" LIMIT {val_ph} ").format(val_ph=sql.Placeholder(val))
+        return sql.SQL(" LIMIT {val_ph}").format(val_ph=sql.Placeholder(val))
 
 
 def order(arg: Optional[str], ascending: Optional[bool] = True) -> sql.Composable:
