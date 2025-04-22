@@ -786,7 +786,7 @@ class PsyscaleDB:
             desired_table = AssetTable(asset_class, timeframe, False, False, rth)
             src_table, need_to_calc = self.table_config[
                 Schema(schema)
-            ].get_select_from_table(desired_table)
+            ].get_selection_source_table(desired_table)
 
             # Configure return args as a set
             if rtn_args is None:

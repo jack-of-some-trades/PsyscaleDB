@@ -460,32 +460,50 @@ class TimeseriesConfig:
     def std_tables(self, asset_class: str, inserted: bool = False) -> List[AssetTable]:
         if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
+
+        raws = self.raw_tables(asset_class, "std") if inserted else []
+        if asset_class not in self._std_tables:
+            return raws
+
         if not inserted:
             return self._std_tables[asset_class]
         else:
-            return self._std_tables[asset_class] + self.raw_tables(asset_class, "std")
+            return self._std_tables[asset_class] + raws
 
     def rth_tables(self, asset_class: str, inserted: bool = False) -> List[AssetTable]:
         if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
+
+        raws = self.raw_tables(asset_class, "rth") if inserted else []
+        if asset_class not in self._rth_tables:
+            return raws
+
         if not inserted:
             return self._rth_tables[asset_class]
         else:
-            return self._rth_tables[asset_class] + self.raw_tables(asset_class, "rth")
+            return self._rth_tables[asset_class] + raws
 
     def eth_tables(self, asset_class: str, inserted: bool = False) -> List[AssetTable]:
         if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
+
+        raws = self.raw_tables(asset_class, "eth") if inserted else []
+        if asset_class not in self._eth_tables:
+            return raws
+
         if not inserted:
             return self._eth_tables[asset_class]
         else:
-            return self._eth_tables[asset_class] + self.raw_tables(asset_class, "eth")
+            return self._eth_tables[asset_class] + raws
 
     def raw_tables(
         self, asset_class: str, rth: Literal["all", "std", "rth", "eth"] = "all"
     ) -> List[AssetTable]:
         if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
+        if asset_class not in self._inserted_tables:
+            return []
+
         if rth == "all":
             return self._inserted_tables[asset_class]
         elif rth == "std":
@@ -501,94 +519,13 @@ class TimeseriesConfig:
                 tbl for tbl in self._inserted_tables[asset_class] if tbl.rth is False
             ]
 
-    def get_cont_agg_source(self, derived_table: AssetTable) -> AssetTable:
-        "Return the Most appropriate Asset Table to Aggregate into the given table."
-        all_lower_tfs = [
-            tbl
-            for tbl in self.all_tables(derived_table.asset_class)
-            if tbl.period < derived_table.period
-        ]
-        if len(all_lower_tfs) == 0:
-            raise AttributeError(
-                f"Cannot create Aggregate Table: {derived_table} \n"
-                "The Current config lacks lower timeframe data."
-            )
-
-        # Match Ext True/False
-        all_valid_ext = [tbl for tbl in all_lower_tfs if tbl.ext == derived_table.ext]
-        # Match RTH True/False/None
-        all_valid_ext = [
-            tbl
-            for tbl in all_valid_ext
-            if tbl.rth is None or tbl.rth == derived_table.rth
-        ]
-        if len(all_valid_ext) == 0:
-            raise AttributeError(
-                f"Cannot create Aggregate Table: {derived_table} \n"
-                "The config and Derived tables have mismatching ETH Data."
-            )
-
-        all_valid_multiples = [
-            tbl
-            for tbl in all_valid_ext
-            if (derived_table.period % tbl.period) == Timedelta(0)
-        ]
-        if len(all_valid_multiples) == 0:
-            raise AttributeError(
-                f"Cannot create Aggregate Table: {derived_table} \n"
-                "There are no Whole Period Devisors of the Aggregate Table"
-            )
-
-        # Strip out all but the lowest *inserted* Timeframe. All HTF inserted data is assumed
-        # to not be maintained and therefore should only be used with a join
-        all_raws = [tbl for tbl in all_valid_multiples if tbl.raw]
-        all_raws.sort(key=lambda x: x.period)
-
-        # Filter down only to only the raw tables (that have no origin) and tables
-        # with identical origins. Painful, but timescale does not allow an aggregate
-        # to form from an aggregate that has a different time_bucket origin.
-        all_non_raws = [
-            tbl
-            for tbl in all_valid_multiples
-            if not tbl.raw and tbl.origin_ts == derived_table.origin_ts
-        ]
-
-        all_valid = all_non_raws + all_raws[0:1]
-        all_valid.sort(key=lambda x: x.period)
-
-        if len(all_valid) == 0:
-            raise AttributeError(
-                f"Cannot create Aggregate Table: {derived_table} \n"
-                "There are no Whole Period Devisors With an Identical Time_bucket Origin, "
-                "and the Smallest TimeFrame of Inserted Data is not a Whole Devisor"
-            )
-
-        # Get the longest period that satisfies the above conditions
-        return all_valid[-1]
-
-    def get_tables_to_refresh(self, altered_table: AssetTable) -> List[AssetTable]:
-        "Return all the tables that need to be refreshed for a given table that has been altered"
-        all_aggs = self.all_tables(altered_table.asset_class, include_raw=False)
-        # Really this is pretty inefficient and will cause more updates than needed, but I mean,
-        # Does it really matter given data will probably be inserted once a day at most? No.
-        filtered_aggs = [agg for agg in all_aggs if agg.period > altered_table.period]
-        filtered_aggs.sort(key=lambda x: x.period)  # Ensure aggregates are ordered.
-        return filtered_aggs
-
-    def get_select_from_table(
-        self, desired_table: AssetTable
-    ) -> Tuple[AssetTable, bool]:
+    def get_aggregation_source(
+        self, desired_table: AssetTable, rtn_self: bool = False
+    ) -> AssetTable:
         """
         Given the desired AssetTable, return the most appropriate AssetTable to pull or derive
-        the desired data from. The Returned bool denotes when data must be selected or derived
-
-        When True, the data is stored in the returned AssetTable and can be selected.
-        when False, the desired data must be aggregated from the returned AssetTable.
-
-        The desired table should, in the vast majority of cases, have it's RTH property set to
-        True or False, If set to None, it is likely to unnecessarily aggregate higher
-        timeframe data that may be stored and can be selected instead.
-        As a consequence, the desired_table's ext parameter is unused.
+        the desired data from. When rtn_self == True this function can return the table passed
+        if it is in the table config
         """
         tbls = self.all_tables(desired_table.asset_class)
 
@@ -603,11 +540,14 @@ class TimeseriesConfig:
                 "cannot be derived from info in the database."
             )
 
+        if not rtn_self:
+            # Ensure the desired table is removed from the pool of possible returns
+            divisor_tbls = [tbl for tbl in divisor_tbls if tbl != desired_table]
+
         # Ext information does not matter in this asset_class, return highest timeframe table
         if not self._ext_important(desired_table.asset_class):
             divisor_tbls.sort(key=lambda x: x.period)
-            rtn_tbl = divisor_tbls[-1]
-            return rtn_tbl, rtn_tbl.period != desired_table.period
+            return divisor_tbls[-1]
 
         # Match EXT Information and then return the highest timeframe table
         if desired_table.rth is None:
@@ -626,8 +566,34 @@ class TimeseriesConfig:
             )
 
         ext_matches.sort(key=lambda x: x.period)
-        rtn_tbl = ext_matches[-1]
-        return rtn_tbl, rtn_tbl.period != desired_table.period
+        return ext_matches[-1]
+
+    def get_selection_source_table(
+        self, desired_table: AssetTable
+    ) -> Tuple[AssetTable, bool]:
+        """
+        Given the desired AssetTable, return the most appropriate AssetTable to pull or derive
+        the desired data from. The Returned bool denotes when data must be selected or derived
+
+        When True, the data is stored in the returned AssetTable and can be selected.
+        when False, the desired data must be aggregated from the returned AssetTable.
+
+        The desired table should, in the vast majority of cases, have it's RTH property set to
+        True or False, If set to None, it is likely to unnecessarily aggregate higher
+        timeframe data that may be stored and can be selected instead.
+        As a consequence, the desired_table's ext parameter is unused.
+        """
+        tbl = self.get_aggregation_source(desired_table, rtn_self=True)
+        return tbl, tbl != desired_table
+
+    def get_tables_to_refresh(self, altered_table: AssetTable) -> List[AssetTable]:
+        "Return all the tables that need to be refreshed for a given table that has been altered"
+        all_aggs = self.all_tables(altered_table.asset_class, include_raw=False)
+        # Really this is pretty inefficient and will cause more updates than needed, but I mean,
+        # Does it really matter given data will probably be inserted once a day at most? No.
+        filtered_aggs = [agg for agg in all_aggs if agg.period > altered_table.period]
+        filtered_aggs.sort(key=lambda x: x.period)  # Ensure aggregates are ordered.
+        return filtered_aggs
 
     @classmethod
     def from_table_names(
@@ -649,9 +615,6 @@ class TimeseriesConfig:
 
         tables = []
         for name in names:
-            # Filter out All Table names that begin with an '_'. They are metadata.
-            if name.startswith("_"):
-                continue
             try:
                 tables.append(AssetTable.from_table_name(name))
             except ValueError:
@@ -659,6 +622,7 @@ class TimeseriesConfig:
                     "Timeseries Database contains an invalid table name: %s", name
                 )
 
+        tables.sort(key=lambda tbl: tbl.period)
         asset_classes = {table.asset_class for table in tables}
 
         cls_inst = cls(asset_classes)  # type:ignore

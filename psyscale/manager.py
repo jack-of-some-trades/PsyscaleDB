@@ -582,7 +582,7 @@ class PsyscaleMod(PsyscaleDB):
             tbls.sort(key=lambda x: x.period)  # Must generate lowest periods first
             for tbl in tbls:
                 log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
-                ref_table = config.get_cont_agg_source(tbl)
+                ref_table = config.get_aggregation_source(tbl)
                 tbl_type = (
                     SeriesTbls.CONTINUOUS_TICK_AGG
                     if ref_table.period == Timedelta(0)
@@ -681,7 +681,7 @@ class PsyscaleMod(PsyscaleDB):
             tbls.sort(key=lambda x: x.period)  # Must generate lowest periods first
             for tbl in tbls:
                 log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
-                ref_table = config.get_cont_agg_source(tbl)
+                ref_table = config.get_aggregation_source(tbl)
                 tbl_type = (
                     SeriesTbls.CONTINUOUS_TICK_AGG
                     if ref_table.period == Timedelta(0)
