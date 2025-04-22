@@ -177,7 +177,7 @@ def create_tick_table(schema: str, table: AssetTable) -> sql.Composed:
 
 def create_continuous_tick_aggregate(
     schema: str, table: AssetTable, ref_table: AssetTable
-):
+) -> sql.Composed:
     "Create the inital continuous aggregate from a tick table."
     _error_check_continuous_aggrigate(table, ref_table)
     return sql.SQL(

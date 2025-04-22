@@ -1,6 +1,7 @@
 """SQL Operation Map Construction and Commands Accessor"""
 
 from __future__ import annotations
+from copy import deepcopy
 from enum import StrEnum
 from functools import partial
 from typing import Optional, Tuple, TypeAlias, Callable
@@ -26,7 +27,7 @@ class Commands:
     """
 
     def __init__(self, operation_map: Optional[OperationMap] = None) -> None:
-        self.operation_map = OPERATION_MAP
+        self.operation_map = deepcopy(OPERATION_MAP)
 
         if operation_map is not None:
             self.merge_operations(operation_map)
@@ -48,21 +49,24 @@ class Commands:
             self.operation_map[operation] |= tbl_map
 
     def __getitem__(
-        self, args: Tuple[Operation, StrEnum]
+        self, args: Tuple[Operation, StrEnum | str]
     ) -> Callable[..., sql.Composed]:
         """
         Accessor to retrieve sql commands. Does not type check function args.
         Call Signature is Obj[Operation, Table](*Function Specific args)
         """
         if args[1] not in self.operation_map[args[0]]:
+            tbl = args[1] if isinstance(args[1], str) else args[1].value
             raise ValueError(
-                f"Operation '{args[0].name}' not known for Postgres Table: {args[1].value}"
+                f"Operation '{args[0].name}' not known for Postgres Table: {tbl}"
             )
 
         return self.operation_map[args[0]][args[1]]
 
 
-OperationMap: TypeAlias = dict[Operation, dict[StrEnum, Callable[..., sql.Composed]]]
+OperationMap: TypeAlias = dict[
+    Operation, dict[StrEnum | str, Callable[..., sql.Composed]]
+]
 
 OPERATION_MAP: OperationMap = {
     # Mapping that defines the SQL Composing Function for each Operation and Table Combination
