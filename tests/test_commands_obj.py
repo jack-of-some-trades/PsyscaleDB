@@ -1,3 +1,4 @@
+import logging
 import pytest
 from psycopg import sql
 from psyscale.psql import Commands, Operation, SeriesTbls
@@ -38,7 +39,9 @@ def test_initializes_with_default_map():
     )
 
 
-def test_merge_operations_overrides_existing_strenum(mock_operation_map):
+def test_merge_operations_overrides_existing_strenum(mock_operation_map, caplog):
+    caplog.set_level(logging.WARNING)
+
     cmds = Commands()
     # Copy existing func to compare
     create_tick_original_func = cmds[Operation.CREATE, SeriesTbls.TICK]
@@ -52,8 +55,21 @@ def test_merge_operations_overrides_existing_strenum(mock_operation_map):
     assert cmds[Operation.CREATE, SeriesTbls.TICK] == dummy_sql_function
     assert cmds[Operation.CREATE, SeriesTbls.TICK] != create_tick_original_func
 
+    # Assert Warning Message was Thrown
+    assert any(
+        f"Overriding psyscale default Operation.CREATE for tables: {set([SeriesTbls.TICK])}"
+        in record.message
+        for record in caplog.records
+    ), "Expected a warning about overriding CREATE operations"
+    assert any(
+        f"Overriding psyscale default Operation.SELECT for tables: {set([SeriesTbls._ORIGIN])}"
+        in record.message
+        for record in caplog.records
+    ), "Expected a warning about overriding SELECT operations"
 
-def test_merge_operations_overrides_existing_str(mock_operation_map):
+
+def test_merge_operations_overrides_existing_str(mock_operation_map, caplog):
+    caplog.set_level(logging.WARNING)
     cmds = Commands()
     # Copy existing func to compare
     create_tick_original_func = cmds[Operation.CREATE, "tick"]
@@ -66,6 +82,18 @@ def test_merge_operations_overrides_existing_str(mock_operation_map):
     assert cmds[Operation.CREATE, "tick_buffer"] == tick_buffer_original_func
     assert cmds[Operation.CREATE, "tick"] == dummy_sql_function
     assert cmds[Operation.CREATE, "tick"] != create_tick_original_func
+
+    # Assert Warning Message was Thrown
+    assert any(
+        f"Overriding psyscale default Operation.CREATE for tables: {set([SeriesTbls.TICK])}"
+        in record.message
+        for record in caplog.records
+    ), "Expected a warning about overriding CREATE operations"
+    assert any(
+        f"Overriding psyscale default Operation.SELECT for tables: {set([SeriesTbls._ORIGIN])}"
+        in record.message
+        for record in caplog.records
+    ), "Expected a warning about overriding SELECT operations"
 
 
 def test_custom_map_on_init(mock_operation_map):

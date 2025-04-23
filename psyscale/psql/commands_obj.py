@@ -3,6 +3,7 @@
 from __future__ import annotations
 from copy import deepcopy
 from enum import StrEnum
+from logging import getLogger
 from functools import partial
 from typing import Optional, Tuple, TypeAlias, Callable
 
@@ -12,6 +13,8 @@ from . import generic as gen
 from . import security as sec
 from . import timeseries as ts
 from .enum import Operation, Schema, GenericTbls, AssetTbls, SeriesTbls
+
+log = getLogger("psyscale_log")
 
 
 # pylint: disable=protected-access
@@ -46,6 +49,13 @@ class Commands:
         will both overwrite the creation of the symbols table.
         """
         for operation, tbl_map in operation_map.items():
+            known_keys = set(self.operation_map[operation].keys())
+            if len(overlap := known_keys.intersection(tbl_map.keys())) > 0:
+                log.warning(
+                    "Overriding psyscale default %s for tables: %s",
+                    operation,
+                    overlap,
+                )
             self.operation_map[operation] |= tbl_map
 
     def __getitem__(
