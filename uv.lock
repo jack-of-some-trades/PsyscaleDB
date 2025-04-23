@@ -344,13 +344,13 @@ dependencies = [
     { name = "pandas" },
     { name = "pandas-market-calendars" },
     { name = "psycopg", extra = ["binary", "pool"] },
-    { name = "python-dotenv" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "alpaca-py" },
     { name = "pytest" },
+    { name = "python-dotenv" },
     { name = "testcontainers" },
 ]
 
@@ -359,13 +359,13 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.2.2" },
     { name = "pandas-market-calendars", specifier = ">=5.0.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2.6" },
-    { name = "python-dotenv", specifier = ">=1.0.1" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "alpaca-py", specifier = ">=0.39.4" },
     { name = "pytest", specifier = ">=8.3.5" },
+    { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "testcontainers", specifier = ">=4.10.0" },
 ]
 
