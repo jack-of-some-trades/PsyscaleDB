@@ -3,6 +3,7 @@
 # pylint: disable=unused-wildcard-import, wildcard-import, unused-import
 from psycopg import sql
 from .psql.enum import *
+from .psql.enum import Operation as Op
 from .psql.generic import *
 from .psql.orm import (
     Storable,

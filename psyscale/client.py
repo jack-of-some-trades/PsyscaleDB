@@ -192,8 +192,8 @@ class PsyscaleDB:
         _timeout = LOCAL_POOL_GEN_TIMEOUT if conn_params.is_local else POOL_GEN_TIMEOUT
 
         try:
-            self.pool = ConnectionPool(conn_params.url, open=False, timeout=_timeout)
-            self.pool.open(timeout=_timeout)
+            self._pool = ConnectionPool(conn_params.url, open=False, timeout=_timeout)
+            self._pool.open(timeout=_timeout)
             log.debug("Health_check: %s", "good" if self._health_check() else "bad")
         except PoolTimeout as e:
             if not conn_params.is_local:
@@ -201,7 +201,7 @@ class PsyscaleDB:
 
             # Try and start the local database, give extra buffer on the timeout.
             self._init_and_start_localdb(docker_compose_fpath, conn_params.volume_path)
-            with self.pool.connection(timeout=2.5) as conn:
+            with self._pool.connection(timeout=2.5) as conn:
                 conn._check_connection_ok()
 
         except OperationalError as e:
@@ -209,6 +209,7 @@ class PsyscaleDB:
 
         self.cmds = Commands()
         self.conn_params = conn_params
+        self._ensure_schemas_exist()
         self._ensure_securities_schema_format()
         self._read_db_timeseries_config()
 
@@ -291,7 +292,7 @@ class PsyscaleDB:
         it seemed to only reduce performance.
         """
         cursor_factory = pg_rows.dict_row if dict_cursor else pg_rows.tuple_row
-        conn: pg.Connection = self.pool.getconn()
+        conn: pg.Connection = self._pool.getconn()
 
         if auto_commit:
             conn.set_autocommit(True)
@@ -312,11 +313,11 @@ class PsyscaleDB:
             else:
                 conn.commit()
 
-            self.pool.putconn(conn)
+            self._pool.putconn(conn)
 
     def execute(
         self,
-        cmd: sql.Composed,
+        cmd: sql.Composed | sql.SQL,
         exec_args: Optional[Mapping[str, int | float | str | None]] = None,
         dict_cursor: bool = False,
     ) -> Tuple[List[Dict] | List[Tuple], str | None]:
@@ -491,6 +492,15 @@ class PsyscaleDB:
                 "TimescaleDBEXT__configure_db_format__() with the appropriate arguments.\n"
                 "See timescale_ext.py for necessary class extention and an Example Configuration."
             )
+
+    def _ensure_schemas_exist(self):
+        with self._cursor() as cursor:
+            cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA]())
+            schemas: set[str] = {rsp[0] for rsp in cursor.fetchall()}
+
+            for schema in {v for v in Schema}.difference(schemas):
+                log.info("Creating Schema %s", schema)
+                cursor.execute(self[Op.CREATE, GenericTbls.SCHEMA](schema))
 
     def _ensure_securities_schema_format(self):
         with self._cursor() as cursor:

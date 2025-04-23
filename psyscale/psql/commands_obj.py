@@ -71,6 +71,7 @@ OperationMap: TypeAlias = dict[
 OPERATION_MAP: OperationMap = {
     # Mapping that defines the SQL Composing Function for each Operation and Table Combination
     Operation.CREATE: {
+        GenericTbls.SCHEMA: gen.create_schema,
         SeriesTbls._ORIGIN: ts.create_origin_table,
         SeriesTbls.TICK: ts.create_tick_table,
         SeriesTbls.TICK_BUFFER: ts.create_raw_tick_buffer,
@@ -107,6 +108,7 @@ OPERATION_MAP: OperationMap = {
     },
     Operation.SELECT: {
         GenericTbls.TABLE: gen.select,
+        GenericTbls.VIEW: gen.list_mat_views,
         GenericTbls.SCHEMA: gen.list_schemas,
         GenericTbls.SCHEMA_TABLES: gen.list_tables,
         SeriesTbls._ORIGIN: ts.select_origin,

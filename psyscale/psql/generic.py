@@ -127,6 +127,14 @@ def list_schemas() -> sql.Composed:
     return sql.SQL("SELECT schema_name FROM information_schema.schemata;").format()
 
 
+def list_mat_views(schema: str) -> sql.Composed:
+    return sql.SQL(
+        "SELECT matviewname FROM pg_matviews WHERE schemaname = {schema_name};"
+    ).format(
+        schema_name=sql.Literal(schema),
+    )
+
+
 def list_tables(schema: str) -> sql.Composed:
     return sql.SQL(
         "SELECT table_name FROM information_schema.tables WHERE table_schema = {schema_name};"
