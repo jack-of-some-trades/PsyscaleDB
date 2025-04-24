@@ -182,10 +182,44 @@ class PsyscaleDB:
 
     def __init__(
         self,
-        conn_params: Optional[PsyscaleConnectParams] = None,
+        conn_params: Optional[PsyscaleConnectParams | str] = None,
         *,
+        down_on_del: bool = False,
         docker_compose_fpath: Optional[str] = None,
     ):
+        """
+        Initilize the PsyscaleDB Client. When the Class detects that the connection parameters given
+        point to a local database the Client will attempt to start the docker container when needed
+        using the sub-process standard library to execute docker commands.
+
+        If this is the first time the database is being run it will initilize the needed docker
+        container using the included docker_compose yml. This includes generating the desired
+        mounting directory.
+
+        -- PARAMS --
+        - conn_params : Optional[PsyscaleConnectParams | str]
+            - A string argument is interpreted as a formatted connection url.
+            - When None is given the Client will initialize the database using environment variables
+
+        - docker_compose_fpath: Optional[str]
+            - Optional File path to point to a custom docker compose yml. Will only be used if the
+            conn_params point to a local database *and* the client cannot immediately connect.
+            In that case, this file path will be used when calling 'docker-compose up' using a
+            sub-process.
+
+        - down_on_del : Boolean Default = False
+            - When True, on delete, this client will call 'docker compose down' using the stored
+            docker_compose yml. While this does close out an unneeded docker container, this is not
+            advised since it will blindly close the container even if another instance or program
+            has a connection to the database.
+            - Only useful when pointing to a local database.
+            - Assumes that the given connection parameters point to the database that was started
+            from the stored yml (either the default or the one passed as an argument)
+
+        """
+        self.down_on_del = down_on_del
+        if isinstance(conn_params, str):
+            conn_params = PsyscaleConnectParams.from_url(conn_params)
         if conn_params is None:
             conn_params = PsyscaleConnectParams.from_env()
 
@@ -216,6 +250,14 @@ class PsyscaleDB:
     def __getitem__(self, args: Tuple[Op, StrEnum]) -> Callable[..., sql.Composed]:
         "Accessor forwarder for the self.cmds object"
         return self.cmds[args]
+
+    def __del__(self):
+        if self.down_on_del and self.conn_params.is_local:
+            subprocess.run(
+                ["docker-compose", "-f", self.yml_path, "down"],
+                capture_output=False,
+                check=False,
+            )
 
     def merge_operations(self, _map: OperationMap):
         "Merge additional operations into the Database's stored SQL Command Map"

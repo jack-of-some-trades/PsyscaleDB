@@ -61,7 +61,16 @@ def test_02_client_initilization_from_params(test_container: PostgresContainer):
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 def test_03_client_initilization_from_url(test_container: PostgresContainer):
+    # Test passing Param Obj
     conn_params = PsyscaleConnectParams.from_url(test_container.get_connection_url())
+    db = PsyscaleDB(conn_params)
+    rtn, status = db.execute(sql.SQL("SELECT 1").format())
+
+    assert rtn[0][0] == 1
+    assert status == "SELECT 1"
+
+    # test passing url directly
+    conn_params = test_container.get_connection_url()
     db = PsyscaleDB(conn_params)
     rtn, status = db.execute(sql.SQL("SELECT 1").format())
 
