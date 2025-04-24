@@ -12,10 +12,10 @@ from psyscale.psql.generic import list_schemas
 
 
 # Test naming convention done to ensure test orders
-def test_00_initlization_state(module_test_url):
+def test_00_initlization_state(test_url):
     # Check to make sure there is nothing in the database already
     with (
-        connect(module_test_url) as _conn,
+        connect(test_url) as _conn,
         _conn.cursor(row_factory=tuple_row) as _cursor,
     ):
         _cursor.execute(list_schemas())
@@ -26,14 +26,14 @@ def test_00_initlization_state(module_test_url):
 
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
-def test_01_client_initilization_from_env(module_test_container: PostgresContainer):
-    os.environ["PSYSCALE_HOST"] = module_test_container.get_container_host_ip()
+def test_01_client_initilization_from_env(test_container: PostgresContainer):
+    os.environ["PSYSCALE_HOST"] = test_container.get_container_host_ip()
     os.environ["PSYSCALE_PORT"] = str(
-        module_test_container.get_exposed_port(module_test_container.port)
+        test_container.get_exposed_port(test_container.port)
     )
-    os.environ["PSYSCALE_USER"] = module_test_container.username
-    os.environ["PSYSCALE_PASSWORD"] = module_test_container.password
-    os.environ["PSYSCALE_DB_NAME"] = module_test_container.dbname
+    os.environ["PSYSCALE_USER"] = test_container.username
+    os.environ["PSYSCALE_PASSWORD"] = test_container.password
+    os.environ["PSYSCALE_DB_NAME"] = test_container.dbname
 
     db = PsyscaleDB()
     rtn, status = db.execute(sql.SQL("SELECT 1").format())
@@ -43,13 +43,13 @@ def test_01_client_initilization_from_env(module_test_container: PostgresContain
 
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
-def test_02_client_initilization_from_params(module_test_container: PostgresContainer):
+def test_02_client_initilization_from_params(test_container: PostgresContainer):
     conn_params = PsyscaleConnectParams(
-        module_test_container.get_container_host_ip(),
-        module_test_container.get_exposed_port(module_test_container.port),
-        module_test_container.username,
-        module_test_container.password,
-        module_test_container.dbname,
+        test_container.get_container_host_ip(),
+        test_container.get_exposed_port(test_container.port),
+        test_container.username,
+        test_container.password,
+        test_container.dbname,
     )
 
     db = PsyscaleDB(conn_params)
@@ -60,10 +60,8 @@ def test_02_client_initilization_from_params(module_test_container: PostgresCont
 
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
-def test_03_client_initilization_from_url(module_test_container: PostgresContainer):
-    conn_params = PsyscaleConnectParams.from_url(
-        module_test_container.get_connection_url()
-    )
+def test_03_client_initilization_from_url(test_container: PostgresContainer):
+    conn_params = PsyscaleConnectParams.from_url(test_container.get_connection_url())
     db = PsyscaleDB(conn_params)
     rtn, status = db.execute(sql.SQL("SELECT 1").format())
 
@@ -72,10 +70,8 @@ def test_03_client_initilization_from_url(module_test_container: PostgresContain
 
 
 @pytest.fixture(scope="module")
-def db(module_test_container: PostgresContainer):
-    conn_params = PsyscaleConnectParams.from_url(
-        module_test_container.get_connection_url()
-    )
+def db(test_container: PostgresContainer):
+    conn_params = PsyscaleConnectParams.from_url(test_container.get_connection_url())
     yield PsyscaleDB(conn_params)
 
 
