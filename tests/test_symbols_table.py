@@ -254,3 +254,42 @@ def test_fuzzy_trigram_search_orders_results(psyscale_db, clean_symbols_table):
     assert names[1] == "Test Symbol"
     assert names[2] == "Test Symbol 1"
     assert names[3] == "Testing Simbol"  # Least Relevant Should be last.
+
+
+def test_update_symbol_valid_and_constraint_violation(
+    psyscale_db, symbols_df, clean_symbols_table, caplog
+):
+    # Insert test symbols
+    psyscale_db.upsert_securities(symbols_df, source="UnitTest")
+
+    # Retrieve pkey of "AAPL"
+    aapl = psyscale_db.search_symbols(
+        {"symbol": "AAPL", "source": "UnitTest"}, strict_symbol_search="="
+    )
+    assert aapl and "pkey" in aapl[0]
+    pkey = aapl[0]["pkey"]
+
+    # Valid update
+    result = psyscale_db.update_symbol(pkey, {"store_tick": True})
+    assert result is True
+
+    # Ensure update can be retrieved (and pkey search works)
+    aapl = psyscale_db.search_symbols(
+        {"pkey": pkey}, strict_symbol_search="=", return_attrs=True
+    )[0]
+    assert "store_tick" in aapl and aapl["store_tick"]
+    assert "store" in aapl and aapl["store"]
+
+    # Check Symbols table constraint shows error
+    with caplog.at_level("ERROR"):
+        result = psyscale_db.update_symbol(pkey, {"store_minute": True})
+        assert result is False
+    with caplog.at_level("ERROR"):
+        result = psyscale_db.update_symbol(pkey, {"store_aggregate": True})
+        assert result is False
+
+    # Optional: Confirm original value was not modified post-exception
+    updated = psyscale_db.search_symbols({"pkey": pkey})[0]
+    assert updated["store_tick"] is True
+    assert updated["store_minute"] is False
+    assert updated["store_aggregate"] is False

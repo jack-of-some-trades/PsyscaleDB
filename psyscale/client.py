@@ -717,6 +717,8 @@ class PsyscaleDB:
                 cursor.statusmessage is not None and cursor.statusmessage == "UPDATE 1"
             )
 
+        return False  # Default return if cursor throws error
+
     def stored_symbol_metadata(
         self,
         pkey: int,
