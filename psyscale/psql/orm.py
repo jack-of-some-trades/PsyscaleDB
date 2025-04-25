@@ -551,7 +551,14 @@ class TimeseriesConfig:
 
         # Match EXT Information and then return the highest timeframe table
         if desired_table.rth is None:
+            # rth == None must aggregate from rth == None
             ext_matches = [tbl for tbl in divisor_tbls if tbl.rth is None]
+        elif desired_table.rth is True:
+            # rth == True aggregates to rth timeframe, rth == None / False aggregate to 'eth timeframe'
+            # => When 'rth' True, we must aggregate from a raw table when 'ext' matters
+            ext_matches = [
+                tbl for tbl in divisor_tbls if tbl.rth or (tbl.raw and tbl.rth is None)
+            ]
         else:
             ext_matches = [
                 tbl

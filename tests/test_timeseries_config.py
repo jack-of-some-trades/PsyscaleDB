@@ -222,7 +222,7 @@ def test_get_selection_source_table():
         asset_class="us_stock", period=Timedelta(days=1), rth=True, raw=False, ext=True
     )
     selected_table, needs_aggregation = TEST_CONFIG.get_selection_source_table(
-        mock_table
+        mock_table  # this func inherently allows for 'rtn_self'
     )
     assert needs_aggregation is False
     assert selected_table == mock_table
@@ -438,3 +438,25 @@ def test_invalid_eth_origin(prth):
 
 
 # endregion
+
+MINUTE_CONFIG = TimeseriesConfig(
+    ["equity"],  # type:ignore
+    rth_origins={
+        "equity": Timestamp("2000/01/03 08:30", tz="America/New_York"),
+    },
+    eth_origins={
+        "equity": Timestamp("2000/01/03 04:00", tz="America/New_York"),
+    },
+    prioritize_rth={"equity": True},
+    aggregate_periods={"default": [Timedelta("5m"), Timedelta("30m"), Timedelta("1h")]},
+    inserted_aggregate_periods={"default": [Timedelta("1m")]},
+)
+
+
+def test_no_origin_timestamp_conflict():
+    hour_tbl = AssetTable("equity", Timedelta("1h"), False, True, True)
+    rtn_tbl = MINUTE_CONFIG.get_aggregation_source(hour_tbl, rtn_self=False)
+
+    # This should return the raw insterted minute table. This is because aggregates cannot be made
+    # from continuous aggregates with different origin timestamps
+    assert rtn_tbl == AssetTable("equity", Timedelta("1min"), True, True, None)
