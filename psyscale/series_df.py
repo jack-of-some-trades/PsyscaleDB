@@ -232,6 +232,7 @@ class Calendars:
             return cal.name
 
         # Cached Calendar Requested
+        cal = self.mkt_cache[cal.name]
         sched = self.schedule_cache[cal.name]
         if sched.index[0] > start.tz_localize(None):
             # Extend Start of Schedule with an additional buffer
@@ -241,6 +242,7 @@ class Calendars:
             # Extend End of Schedule with an additional buffer
             extra_dates = cal.schedule(sched.index[-1] + pd.Timedelta("1D"), end)
             sched = pd.concat([sched, extra_dates])
+        self.schedule_cache[cal.name] = sched
 
         return cal.name
 
@@ -250,6 +252,9 @@ class Calendars:
         "Return a Series that denotes the appropriate Trading Hours Session for the given Calendar"
         if mcal is None or calendar == "24/7":
             return None
+
+        print(time_index)
+        print(self.schedule_cache[calendar])
 
         return mcal.mark_session(
             self.schedule_cache[calendar], time_index, label_map=EXT_MAP, closed="left"

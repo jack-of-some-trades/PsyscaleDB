@@ -5,6 +5,8 @@ from typing import Literal, Optional, Tuple, get_args
 
 from pandas import DataFrame, Series, Timedelta, Timestamp
 
+from psyscale.psql.timeseries import AGGREGATE_ARGS, TICK_ARGS
+
 from .series_df import Series_DF
 from .psql import (
     GenericTbls,
@@ -66,6 +68,10 @@ class PsyscaleMod(PsyscaleDB):
                 self._configure_timeseries_schema(
                     cursor, Schema.AGGREGATE_DATA, aggregate_tables
                 )
+
+        # Ensure The appropriate timeseries info is stored in the event this class is used
+        # directly after setting the config
+        self._read_db_timeseries_config()
 
     # endregion
 
@@ -259,7 +265,7 @@ class PsyscaleMod(PsyscaleDB):
         )
 
         # region ---- Check that the data matches name and 'NOT NULL' expectations
-        series_df = Series_DF(data, exchange)  # Rename cols & Populate 'rth'
+        series_df = Series_DF(data.copy(), exchange)  # Rename cols & Populate 'rth'
 
         try:
             if table.period != Timedelta(0):
@@ -267,10 +273,16 @@ class PsyscaleMod(PsyscaleDB):
                 assert table.period == series_df.timedelta
                 assert "close" in series_df.columns
                 assert not series_df.df["close"].isna().any()
+                extra_cols = set(series_df.df.columns).difference(AGGREGATE_ARGS)
             else:
                 # Tick Specific Expectations
                 assert "price" in series_df.columns
                 assert not series_df.df["price"].isna().any()
+                extra_cols = set(series_df.df.columns).difference(TICK_ARGS)
+
+            if len(extra_cols) > 0:
+                series_df.df.drop(columns=extra_cols, inplace=True)
+                log.debug("Ignoring extra columns in dataframe: %s", extra_cols)
 
             # Regardless if Tick or aggregate, check the 'rth' to be NOT NULL when needed.
             if table.has_rth:
@@ -754,8 +766,8 @@ class PsyscaleMod(PsyscaleDB):
             MetadataInfo(
                 table.table_name,
                 schema,
-                Timestamp("1800-01-01"),  # Default values
-                Timestamp("1800-01-01"),
+                Timestamp("1800-01-01", tz="UTC"),  # Default values
+                Timestamp("1800-01-01", tz="UTC"),
                 table,
             )
             for table in missing_tables
