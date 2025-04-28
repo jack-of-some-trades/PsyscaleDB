@@ -1,3 +1,4 @@
+from psycopg import DatabaseError
 import pytest
 import pandas as pd
 from pandas.testing import assert_series_equal, assert_frame_equal
@@ -171,6 +172,7 @@ def test_03_check_inserted_data(psyscale_db, caplog):
     inserted_data = psyscale_db.get_hist(
         aapl["pkey"],
         pd.Timedelta("1min"),
+        rth=True,
         rtn_args={"open", "high", "low", "close", "volume", "rth"},
     )
 
@@ -179,3 +181,54 @@ def test_03_check_inserted_data(psyscale_db, caplog):
 
     for col in raw_data.columns:
         assert_series_equal(raw_data.df[col], inserted_data[col])
+
+
+def test_04_upsert_on_conflict_states(psyscale_db, AAPL_MIN_DATA, caplog):
+    aapl = psyscale_db.search_symbols({"store": True})[0]
+    metadata = psyscale_db.get_all_symbol_series_metadata(aapl["pkey"])[0]
+
+    alt_data = Series_DF(AAPL_MIN_DATA, "NYSE").df
+    extra_cols = set(alt_data.columns).difference(AGGREGATE_ARGS)
+    alt_data = AAPL_MIN_DATA.drop(columns=extra_cols)
+    # Make some Adjustments
+    alt_data.loc[0, "low"] = -1
+    alt_data.loc[0, "high"] = -1
+    alt_data.loc[0, "open"] = -1
+    alt_data.loc[0, "close"] = -1
+    alt_data.loc[0, "volume"] = -1
+
+    with pytest.raises(DatabaseError):
+        psyscale_db.upsert_symbol_data(
+            aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="error"
+        )
+
+    with caplog.at_level("WARNING"):
+        psyscale_db.upsert_symbol_data(
+            aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="ignore"
+        )
+    assert any(r.levelname == "WARNING" for r in caplog.records)
+    stored_data = psyscale_db.get_hist(
+        aapl["pkey"], pd.Timedelta("1min"), rth=False, limit=10
+    )
+
+    assert stored_data["dt"].iloc[0] == alt_data["dt"].iloc[0]
+    assert stored_data.iloc[0]["low"] != alt_data.iloc[0]["low"]
+    assert stored_data.iloc[0]["high"] != alt_data.iloc[0]["high"]
+    assert stored_data.iloc[0]["open"] != alt_data.iloc[0]["open"]
+    assert stored_data.iloc[0]["close"] != alt_data.iloc[0]["close"]
+    assert stored_data.iloc[0]["volume"] != alt_data.iloc[0]["volume"]
+
+    psyscale_db.upsert_symbol_data(
+        aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="update"
+    )
+    stored_data = psyscale_db.get_hist(
+        aapl["pkey"], pd.Timedelta("1min"), rth=False, limit=10
+    )
+
+    assert stored_data["dt"].iloc[0] == alt_data["dt"].iloc[0]
+    assert_series_equal(stored_data.iloc[0], alt_data.iloc[0])
+
+    # Re-insert the original data for use in following tests
+    psyscale_db.upsert_symbol_data(
+        aapl["pkey"], metadata, AAPL_MIN_DATA.iloc[0:10], "NYSE", on_conflict="update"
+    )

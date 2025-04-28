@@ -253,9 +253,6 @@ class Calendars:
         if mcal is None or calendar == "24/7":
             return None
 
-        print(time_index)
-        print(self.schedule_cache[calendar])
-
         return mcal.mark_session(
             self.schedule_cache[calendar], time_index, label_map=EXT_MAP, closed="left"
         )

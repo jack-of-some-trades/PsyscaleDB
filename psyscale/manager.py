@@ -236,7 +236,7 @@ class PsyscaleMod(PsyscaleDB):
         data: DataFrame,
         exchange: Optional[str] = None,
         *,
-        on_conflict: Literal["update", "error"] = "error",
+        on_conflict: Literal["update", "error", "ignore"] = "ignore",
     ):
         """
         Insert or Upsert symbol data to the database.
@@ -254,7 +254,7 @@ class PsyscaleMod(PsyscaleDB):
             - Exchange that the Asset is traded on. This will be passed to pandas_market_calendars
             so the RTH/ETH session of each datapoint can be determined and stored as necessary.
             - None can be passed for 24/7 Exchanges such as Crypto. (Note: Forex would require 24/5 be passed)
-        - on_conflict : Literal["update", "error"] = "error"
+        - on_conflict : Literal["update", "error", "ignore"] = "error"
             - Action to take when a UNIQUE conflict occurs. Erroring allows for faster insertion
             if it can be ensured that given data will be unique
         """
@@ -326,7 +326,7 @@ class PsyscaleMod(PsyscaleDB):
         # region ---- Filter Timestamps When Purely Inserting Data. ---
         data_fmt = series_df.df
 
-        if on_conflict == "error":
+        if on_conflict == "ignore":
             # When inserting ensure only the range that needs to be added is.
             # Pretty common there's 1 extra data point at the start of a df.
             before_start = data_fmt["dt"] < metadata.start_date
@@ -341,9 +341,17 @@ class PsyscaleMod(PsyscaleDB):
                     extra_data,
                 )
                 data_fmt = data_fmt[dt_filter]
+
+            if len(data_fmt) == 0:
+                log.warning(
+                    "Upsert_Symbol_Data() given only redundant data points and set to ignore.\n"
+                    'No Data is being inserted. Set on_conflict="update" to edit existing data.'
+                )
+                return
+
         # endregion
 
-        with self._cursor() as cursor:
+        with self._cursor(raise_err=True) as cursor:
             # Create & Inject the Data into a Temporary Table
             cursor.execute(self[Op.CREATE, buffer_tbl_type](table))
             copy_cmd = self[Op.COPY, buffer_tbl_type](

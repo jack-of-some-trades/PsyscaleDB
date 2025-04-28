@@ -274,6 +274,7 @@ class PsyscaleDB:
         dict_cursor: Literal[True],
         *,
         pipeline: bool = False,
+        raise_err: bool = False,
         auto_commit: bool = False,
     ) -> Iterator[DictCursor]: ...
     @overload
@@ -283,6 +284,7 @@ class PsyscaleDB:
         dict_cursor: Literal[False] = False,
         *,
         pipeline: bool = False,
+        raise_err: bool = False,
         auto_commit: bool = False,
     ) -> Iterator[TupleCursor]: ...
     @overload
@@ -292,6 +294,7 @@ class PsyscaleDB:
         dict_cursor: bool = False,
         *,
         pipeline: bool = False,
+        raise_err: bool = False,
         auto_commit: bool = False,
     ) -> Iterator[TupleCursor]: ...
 
@@ -318,6 +321,7 @@ class PsyscaleDB:
         dict_cursor: bool = False,
         *,
         pipeline: bool = False,
+        raise_err: bool = False,
         auto_commit: bool = False,
     ) -> Iterator[TupleCursor] | Iterator[DictCursor]:
         """
@@ -332,6 +336,9 @@ class PsyscaleDB:
         Pipeline is a feature of a cursor, that when set to True, avoids waiting for responses
         before executing new commands. In theory that should increase performance. In practice
         it seemed to only reduce performance.
+
+        raise_err = True Raises any database errors after rolling back the database.
+        raise_err = False Rollsback changes, logs an error, then silences the error.
         """
         cursor_factory = pg_rows.dict_row if dict_cursor else pg_rows.tuple_row
         conn: pg.Connection = self._pool.getconn()
@@ -349,6 +356,9 @@ class PsyscaleDB:
         except pg.DatabaseError as e:
             conn.rollback()  # Reset Database, InFailedSqlTransaction Err thrown if not reset
             log.error("Caught Database Error: \n '%s' \n...Rolling back changes.", e)
+
+            if raise_err:
+                raise e  # log the message and continue to let the error bubble
         finally:
             if auto_commit:
                 conn.set_autocommit(False)
@@ -759,7 +769,7 @@ class PsyscaleDB:
         start: Optional[Timestamp] = None,
         end: Optional[Timestamp] = None,
         limit: Optional[int] = None,
-        rth: bool = True,
+        rth: bool = False,
         rtn_args: Optional[Iterable[AggregateArgs | TickArgs]] = None,
         *,
         schema: Optional[str | StrEnum] = None,
@@ -865,6 +875,12 @@ class PsyscaleDB:
 
             cursor.execute(cmd)
             rsp = cursor.fetchall()
-            return None if len(rsp) == 0 else DataFrame(rsp[0])
+            if len(rsp) == 0:
+                return None
+            else:
+                _rtn = DataFrame(rsp[0])
+                # tz_convert to use an expected tz of 'UTC' over 'etc/utc'
+                _rtn["dt"] = _rtn["dt"].dt.tz_convert("UTC")
+                return _rtn
 
     # endregion
