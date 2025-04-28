@@ -40,9 +40,9 @@ def limit(val: Optional[str | int]) -> sql.Composable:
     if val is None:
         return sql.SQL("")
     if isinstance(val, int):
-        return sql.SQL(" LIMIT {val} ").format(val=sql.Literal(val))
+        return sql.SQL(" LIMIT {val}").format(val=sql.Literal(val))
     else:
-        return sql.SQL(" LIMIT {val_ph} ").format(val_ph=sql.Placeholder(val))
+        return sql.SQL(" LIMIT {val_ph}").format(val_ph=sql.Placeholder(val))
 
 
 def order(arg: Optional[str], ascending: Optional[bool] = True) -> sql.Composable:
@@ -125,6 +125,14 @@ def filter_composer(
 
 def list_schemas() -> sql.Composed:
     return sql.SQL("SELECT schema_name FROM information_schema.schemata;").format()
+
+
+def list_mat_views(schema: str) -> sql.Composed:
+    return sql.SQL(
+        "SELECT matviewname FROM pg_matviews WHERE schemaname = {schema_name};"
+    ).format(
+        schema_name=sql.Literal(schema),
+    )
 
 
 def list_tables(schema: str) -> sql.Composed:

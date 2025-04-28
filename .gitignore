@@ -10,9 +10,11 @@
 *.cpython-312.pyc
 *.cpython-313.pyc
 __pycache__
+.pytest_cache
 
 # Development Testing Code #
 /examples/test.py
+/tests/htmlcov/*
 
 # Packages #
 ############

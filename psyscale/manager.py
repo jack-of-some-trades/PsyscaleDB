@@ -5,6 +5,8 @@ from typing import Literal, Optional, Tuple, get_args
 
 from pandas import DataFrame, Series, Timedelta, Timestamp
 
+from psyscale.psql.timeseries import AGGREGATE_ARGS, TICK_ARGS
+
 from .series_df import Series_DF
 from .psql import (
     GenericTbls,
@@ -66,6 +68,10 @@ class PsyscaleMod(PsyscaleDB):
                 self._configure_timeseries_schema(
                     cursor, Schema.AGGREGATE_DATA, aggregate_tables
                 )
+
+        # Ensure The appropriate timeseries info is stored in the event this class is used
+        # directly after setting the config
+        self._read_db_timeseries_config()
 
     # endregion
 
@@ -230,7 +236,7 @@ class PsyscaleMod(PsyscaleDB):
         data: DataFrame,
         exchange: Optional[str] = None,
         *,
-        on_conflict: Literal["update", "error"] = "error",
+        on_conflict: Literal["update", "error", "ignore"] = "ignore",
     ):
         """
         Insert or Upsert symbol data to the database.
@@ -248,7 +254,7 @@ class PsyscaleMod(PsyscaleDB):
             - Exchange that the Asset is traded on. This will be passed to pandas_market_calendars
             so the RTH/ETH session of each datapoint can be determined and stored as necessary.
             - None can be passed for 24/7 Exchanges such as Crypto. (Note: Forex would require 24/5 be passed)
-        - on_conflict : Literal["update", "error"] = "error"
+        - on_conflict : Literal["update", "error", "ignore"] = "error"
             - Action to take when a UNIQUE conflict occurs. Erroring allows for faster insertion
             if it can be ensured that given data will be unique
         """
@@ -259,7 +265,7 @@ class PsyscaleMod(PsyscaleDB):
         )
 
         # region ---- Check that the data matches name and 'NOT NULL' expectations
-        series_df = Series_DF(data, exchange)  # Rename cols & Populate 'rth'
+        series_df = Series_DF(data.copy(), exchange)  # Rename cols & Populate 'rth'
 
         try:
             if table.period != Timedelta(0):
@@ -267,10 +273,16 @@ class PsyscaleMod(PsyscaleDB):
                 assert table.period == series_df.timedelta
                 assert "close" in series_df.columns
                 assert not series_df.df["close"].isna().any()
+                extra_cols = set(series_df.df.columns).difference(AGGREGATE_ARGS)
             else:
                 # Tick Specific Expectations
                 assert "price" in series_df.columns
                 assert not series_df.df["price"].isna().any()
+                extra_cols = set(series_df.df.columns).difference(TICK_ARGS)
+
+            if len(extra_cols) > 0:
+                series_df.df.drop(columns=extra_cols, inplace=True)
+                log.debug("Ignoring extra columns in dataframe: %s", extra_cols)
 
             # Regardless if Tick or aggregate, check the 'rth' to be NOT NULL when needed.
             if table.has_rth:
@@ -314,7 +326,7 @@ class PsyscaleMod(PsyscaleDB):
         # region ---- Filter Timestamps When Purely Inserting Data. ---
         data_fmt = series_df.df
 
-        if on_conflict == "error":
+        if on_conflict == "ignore":
             # When inserting ensure only the range that needs to be added is.
             # Pretty common there's 1 extra data point at the start of a df.
             before_start = data_fmt["dt"] < metadata.start_date
@@ -329,9 +341,17 @@ class PsyscaleMod(PsyscaleDB):
                     extra_data,
                 )
                 data_fmt = data_fmt[dt_filter]
+
+            if len(data_fmt) == 0:
+                log.warning(
+                    "Upsert_Symbol_Data() given only redundant data points and set to ignore.\n"
+                    'No Data is being inserted. Set on_conflict="update" to edit existing data.'
+                )
+                return
+
         # endregion
 
-        with self._cursor() as cursor:
+        with self._cursor(raise_err=True) as cursor:
             # Create & Inject the Data into a Temporary Table
             cursor.execute(self[Op.CREATE, buffer_tbl_type](table))
             copy_cmd = self[Op.COPY, buffer_tbl_type](
@@ -582,7 +602,7 @@ class PsyscaleMod(PsyscaleDB):
             tbls.sort(key=lambda x: x.period)  # Must generate lowest periods first
             for tbl in tbls:
                 log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
-                ref_table = config.get_cont_agg_source(tbl)
+                ref_table = config.get_aggregation_source(tbl)
                 tbl_type = (
                     SeriesTbls.CONTINUOUS_TICK_AGG
                     if ref_table.period == Timedelta(0)
@@ -681,7 +701,7 @@ class PsyscaleMod(PsyscaleDB):
             tbls.sort(key=lambda x: x.period)  # Must generate lowest periods first
             for tbl in tbls:
                 log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
-                ref_table = config.get_cont_agg_source(tbl)
+                ref_table = config.get_aggregation_source(tbl)
                 tbl_type = (
                     SeriesTbls.CONTINUOUS_TICK_AGG
                     if ref_table.period == Timedelta(0)
@@ -754,8 +774,8 @@ class PsyscaleMod(PsyscaleDB):
             MetadataInfo(
                 table.table_name,
                 schema,
-                Timestamp("1800-01-01"),  # Default values
-                Timestamp("1800-01-01"),
+                Timestamp("1800-01-01", tz="UTC"),  # Default values
+                Timestamp("1800-01-01", tz="UTC"),
                 table,
             )
             for table in missing_tables

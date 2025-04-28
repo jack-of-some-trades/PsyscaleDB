@@ -182,18 +182,52 @@ class PsyscaleDB:
 
     def __init__(
         self,
-        conn_params: Optional[PsyscaleConnectParams] = None,
+        conn_params: Optional[PsyscaleConnectParams | str] = None,
         *,
+        down_on_del: bool = False,
         docker_compose_fpath: Optional[str] = None,
     ):
+        """
+        Initilize the PsyscaleDB Client. When the Class detects that the connection parameters given
+        point to a local database the Client will attempt to start the docker container when needed
+        using the sub-process standard library to execute docker commands.
+
+        If this is the first time the database is being run it will initilize the needed docker
+        container using the included docker_compose yml. This includes generating the desired
+        mounting directory.
+
+        -- PARAMS --
+        - conn_params : Optional[PsyscaleConnectParams | str]
+            - A string argument is interpreted as a formatted connection url.
+            - When None is given the Client will initialize the database using environment variables
+
+        - docker_compose_fpath: Optional[str]
+            - Optional File path to point to a custom docker compose yml. Will only be used if the
+            conn_params point to a local database *and* the client cannot immediately connect.
+            In that case, this file path will be used when calling 'docker-compose up' using a
+            sub-process.
+
+        - down_on_del : Boolean Default = False
+            - When True, on delete, this client will call 'docker compose down' using the stored
+            docker_compose yml. While this does close out an unneeded docker container, this is not
+            advised since it will blindly close the container even if another instance or program
+            has a connection to the database.
+            - Only useful when pointing to a local database.
+            - Assumes that the given connection parameters point to the database that was started
+            from the stored yml (either the default or the one passed as an argument)
+
+        """
+        self.down_on_del = down_on_del
+        if isinstance(conn_params, str):
+            conn_params = PsyscaleConnectParams.from_url(conn_params)
         if conn_params is None:
             conn_params = PsyscaleConnectParams.from_env()
 
         _timeout = LOCAL_POOL_GEN_TIMEOUT if conn_params.is_local else POOL_GEN_TIMEOUT
 
         try:
-            self.pool = ConnectionPool(conn_params.url, open=False, timeout=_timeout)
-            self.pool.open(timeout=_timeout)
+            self._pool = ConnectionPool(conn_params.url, open=False, timeout=_timeout)
+            self._pool.open(timeout=_timeout)
             log.debug("Health_check: %s", "good" if self._health_check() else "bad")
         except PoolTimeout as e:
             if not conn_params.is_local:
@@ -201,7 +235,7 @@ class PsyscaleDB:
 
             # Try and start the local database, give extra buffer on the timeout.
             self._init_and_start_localdb(docker_compose_fpath, conn_params.volume_path)
-            with self.pool.connection(timeout=2.5) as conn:
+            with self._pool.connection(timeout=2.5) as conn:
                 conn._check_connection_ok()
 
         except OperationalError as e:
@@ -209,12 +243,21 @@ class PsyscaleDB:
 
         self.cmds = Commands()
         self.conn_params = conn_params
+        self._ensure_schemas_exist()
         self._ensure_securities_schema_format()
         self._read_db_timeseries_config()
 
     def __getitem__(self, args: Tuple[Op, StrEnum]) -> Callable[..., sql.Composed]:
         "Accessor forwarder for the self.cmds object"
         return self.cmds[args]
+
+    def __del__(self):
+        if self.down_on_del and self.conn_params.is_local:
+            subprocess.run(
+                ["docker-compose", "-f", self.yml_path, "down"],
+                capture_output=False,
+                check=False,
+            )
 
     def merge_operations(self, _map: OperationMap):
         "Merge additional operations into the Database's stored SQL Command Map"
@@ -231,6 +274,7 @@ class PsyscaleDB:
         dict_cursor: Literal[True],
         *,
         pipeline: bool = False,
+        raise_err: bool = False,
         auto_commit: bool = False,
     ) -> Iterator[DictCursor]: ...
     @overload
@@ -240,6 +284,7 @@ class PsyscaleDB:
         dict_cursor: Literal[False] = False,
         *,
         pipeline: bool = False,
+        raise_err: bool = False,
         auto_commit: bool = False,
     ) -> Iterator[TupleCursor]: ...
     @overload
@@ -249,6 +294,7 @@ class PsyscaleDB:
         dict_cursor: bool = False,
         *,
         pipeline: bool = False,
+        raise_err: bool = False,
         auto_commit: bool = False,
     ) -> Iterator[TupleCursor]: ...
 
@@ -275,6 +321,7 @@ class PsyscaleDB:
         dict_cursor: bool = False,
         *,
         pipeline: bool = False,
+        raise_err: bool = False,
         auto_commit: bool = False,
     ) -> Iterator[TupleCursor] | Iterator[DictCursor]:
         """
@@ -289,9 +336,12 @@ class PsyscaleDB:
         Pipeline is a feature of a cursor, that when set to True, avoids waiting for responses
         before executing new commands. In theory that should increase performance. In practice
         it seemed to only reduce performance.
+
+        raise_err = True Raises any database errors after rolling back the database.
+        raise_err = False Rollsback changes, logs an error, then silences the error.
         """
         cursor_factory = pg_rows.dict_row if dict_cursor else pg_rows.tuple_row
-        conn: pg.Connection = self.pool.getconn()
+        conn: pg.Connection = self._pool.getconn()
 
         if auto_commit:
             conn.set_autocommit(True)
@@ -306,17 +356,20 @@ class PsyscaleDB:
         except pg.DatabaseError as e:
             conn.rollback()  # Reset Database, InFailedSqlTransaction Err thrown if not reset
             log.error("Caught Database Error: \n '%s' \n...Rolling back changes.", e)
+
+            if raise_err:
+                raise e  # log the message and continue to let the error bubble
         finally:
             if auto_commit:
                 conn.set_autocommit(False)
             else:
                 conn.commit()
 
-            self.pool.putconn(conn)
+            self._pool.putconn(conn)
 
     def execute(
         self,
-        cmd: sql.Composed,
+        cmd: sql.Composed | sql.SQL,
         exec_args: Optional[Mapping[str, int | float | str | None]] = None,
         dict_cursor: bool = False,
     ) -> Tuple[List[Dict] | List[Tuple], str | None]:
@@ -492,6 +545,15 @@ class PsyscaleDB:
                 "See timescale_ext.py for necessary class extention and an Example Configuration."
             )
 
+    def _ensure_schemas_exist(self):
+        with self._cursor() as cursor:
+            cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA]())
+            schemas: set[str] = {rsp[0] for rsp in cursor.fetchall()}
+
+            for schema in {v for v in Schema}.difference(schemas):
+                log.info("Creating Schema %s", schema)
+                cursor.execute(self[Op.CREATE, GenericTbls.SCHEMA](schema))
+
     def _ensure_securities_schema_format(self):
         with self._cursor() as cursor:
             cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA_TABLES](Schema.SECURITY))
@@ -511,6 +573,35 @@ class PsyscaleDB:
             )
             cursor.execute(self[Op.CREATE, AssetTbls._METADATA_FUNC]())
             cursor.execute(self[Op.CREATE, AssetTbls._METADATA]())
+
+    def _get_pkey(self, symbol: str | int) -> int | None:
+        if isinstance(symbol, int):
+            return symbol
+
+        rsp, _ = self.execute(
+            self[Op.SELECT, GenericTbls.TABLE](
+                Schema.SECURITY,
+                AssetTbls.SYMBOLS,
+                [
+                    "pkey",
+                    "source",
+                    "exchange",
+                    "asset_class",
+                ],
+                filters=("symbol", "ILIKE", symbol),
+                _limit=3,
+            )
+        )
+
+        if len(rsp) > 1:
+            log.warning(
+                "Attempting to fetch or update symbol %s but database contains"
+                " multiple of these symbols. Using first match %s",
+                symbol,
+                rsp[0],
+            )
+
+        return None if len(rsp) == 0 else rsp[0][0]
 
     # endregion
 
@@ -611,10 +702,10 @@ class PsyscaleDB:
             return cursor.fetchall()
 
     def update_symbol(
-        self, pkey: int | list[int], args: dict[SymbolArgs | str, Any]
+        self, symbols: int | str | list[int | str], args: dict[SymbolArgs | str, Any]
     ) -> bool:
         """
-        Update a Single Symbol or list of symbols, by primary key, with the given arguments.
+        Update a Single Symbol or list of symbols with the given arguments.
 
         This method is remained general for utility purposes. It should generally just be used to
         update the stored_[tick/minute/aggregate] columns. All Other parameters should remain
@@ -624,9 +715,12 @@ class PsyscaleDB:
         Note: Setting any stored column = False does not Delete any Data.
 
         :params:
-        - pkey : int or list[int]
-            - Primary key of the symbol to update. May be a single value or list of values.
-            - The Primary key can be retrived in the return object from symbol_search.
+        - symobls : int, str, or list[int | str]
+            - Identifying symbol (str) or primary key (int) of the symbol to update.
+            May be a single value or list of values.
+            - Interger Pkeys are preferred method since multiple rows of the same symbol may be
+            inserted into the database. Unique Symbol collisions only occur on conflicting
+            (symbol, exchange, source) combinations while pkeys are always unique.
 
         - args : Dict[SymbolArgs, Any]
             - A Dictionary of Column Values to update. If PKEY is passed as a Key it will be
@@ -637,18 +731,34 @@ class PsyscaleDB:
 
         :returns: Boolean, True on Successful Update.
         """
+        # Convert varierty of symbol inputs to consistent list of integer pkeys
+        if isinstance(symbols, int):
+            pkeys = [symbols]
+        elif isinstance(symbols, str):
+            pkeys = [self._get_pkey(symbols)]
+            if pkeys[0] is None:
+                log.warning("Cannot Update Symbol %s, symbol is not known.", symbols)
+                return False
+        else:
+            _tmp_list = [(self._get_pkey(symbol), symbol) for symbol in symbols]
+            pkeys = [_tmp_list for pkey, _ in _tmp_list if pkey is not None]
+            unknown_symbols = [symbol for pkey, symbol in _tmp_list if pkey is None]
+            log.warning(
+                "Cannot Update Symbol(s) %s, symbol is not known.", unknown_symbols
+            )
+
         if "pkey" in args:
             args.pop("pkey")
+
         _args = [(k, v) for k, v in args.items() if k in SYMBOL_ARGS]
         if len(_args) == 0:
             log.warning(
                 "Attemping to update Database symbol but no arg updates where given. pkey(s) = %s",
-                pkey,
+                pkeys,
             )
             return False
 
-        pkey = [pkey] if isinstance(pkey, int) else pkey
-        if len(pkey) == 0:
+        if len(pkeys) == 0:
             log.warning(
                 "Attemping to update Database symbol(s) but no pkeys were given"
             )
@@ -656,7 +766,7 @@ class PsyscaleDB:
 
         # Convert The pkeys to a List so only one Update Command needs to be sent.
         _filter = sql.SQL("pkey=ANY(ARRAY[{pkeys}])").format(
-            pkeys=sql.SQL(",").join(sql.Literal(v) for v in pkey)
+            pkeys=sql.SQL(",").join(sql.Literal(v) for v in pkeys)
         )
 
         with self._cursor() as cursor:
@@ -665,9 +775,11 @@ class PsyscaleDB:
                 cursor.statusmessage is not None and cursor.statusmessage == "UPDATE 1"
             )
 
+        return False  # Default return if cursor throws error
+
     def stored_symbol_metadata(
         self,
-        pkey: int,
+        symbol: int | str,
         filters: dict[MetadataArgs | str, Any] = {},
     ) -> list[MetadataInfo]:
         """
@@ -689,6 +801,11 @@ class PsyscaleDB:
             - trading_hours_type : Literal['ext', 'rth', 'eth', 'none']
         """
 
+        pkey = self._get_pkey(symbol)
+        if pkey is None:
+            log.info("Cannot get Metadata, Unknown Symbol: %s", symbol)
+            return []
+
         _filters = [("pkey", "=", pkey)]  # Ensure a Pkey filter is Passed
         _filters.extend(
             [(k, "=", v) for k, v in filters.items() if k in (METADATA_ARGS - {"pkey"})]
@@ -700,13 +817,13 @@ class PsyscaleDB:
 
     def get_hist(
         self,
-        pkey: int,
+        symbol: int | str,
         timeframe: Timedelta,
         start: Optional[Timestamp] = None,
         end: Optional[Timestamp] = None,
         limit: Optional[int] = None,
-        rth: bool = True,
-        rtn_args: Optional[Iterable[AggregateArgs | TickArgs]] = None,
+        rth: bool = False,
+        rtn_args: Optional[Iterable[AggregateArgs | TickArgs | str]] = None,
         *,
         schema: Optional[str | StrEnum] = None,
         asset_class: Optional[str] = None,
@@ -715,9 +832,9 @@ class PsyscaleDB:
         Fetch Historical Data from the Database Aggregating the desired data as needed.
 
         -- PARAMS --
-        - pkey : Int
-            - Primary Key of the Symbol to Fetch
-        - Timeframe : pandas.Timedelta
+        - symbol : Int | Str
+            - Symbol (str) or Primary Key (int) of the Symbol to Fetch (Case is ignored)
+        - timeframe : pandas.Timedelta
             - Interval of the Data to Return. Doesn't not need to be a value stored in the
             database, merely one that can be derived from stored data.
             - Timedelta(0) will return Tick Data if it is stored for the given pkey
@@ -729,28 +846,33 @@ class PsyscaleDB:
             - When False, Return All stored data, RTH/ETH/Closed/Breaks, etc
         - rtn_args : Optional list of arguments to return.
             - Default = {"dt", "open", "high", "low", "close", "volume", "price"}
+            - Unknown args are ignored
             - Note: 'dt' will always be returned even if not included.
 
         - schema : Optional str | strEnum
             - Data Schema to fetch the data from.
         - asset_class : Optional str
             - Asset_class of the symbol requested
-                - Note: Both asset_class & schema will be determined from the pkey if necessary.
-                However, if both are already known and given as args that information will be
-                used in place of querying the database for it.
+                - Note: Both asset_class & schema will be determined from the pkey/symbol if
+                necessary. However, if both are already known and given as args that information
+                will be used in place of querying the database for it.
         """
 
         # Search Metadata for available data at TF or lower
         with self._cursor(dict_cursor=True) as cursor:
 
-            # region -- Fetch Asset Class & Schema given the known pkey if necessary --
-            if asset_class is None or schema is None:
-                _filters = [("pkey", "=", pkey)]
+            # region -- Fetch Asset Class & Schema & Pkey if necessary --
+            if asset_class is None or schema is None or isinstance(symbol, str):
+                if isinstance(symbol, str):
+                    _filters = [("symbol", "ILIKE", symbol)]
+                else:
+                    _filters = [("pkey", "=", symbol)]
                 cursor.execute(
                     self[Op.SELECT, GenericTbls.TABLE](
                         Schema.SECURITY,
                         AssetTbls.SYMBOLS,
                         [
+                            "pkey",
                             "asset_class",
                             "store_tick",
                             "store_minute",
@@ -762,7 +884,7 @@ class PsyscaleDB:
                 )
                 rsp = cursor.fetchall()
                 if len(rsp) == 0:
-                    log.warning("Unknown pkey : %s", pkey)
+                    log.warning("Unknown key : %s", symbol)
                     return
                 rsp = rsp[0]
 
@@ -776,22 +898,35 @@ class PsyscaleDB:
                     schema = None
 
                 if schema is None:
-                    log.warning("pkey = %s is known, but not Stored", pkey)
+                    log.warning("symbol = %s is known, but not Stored", symbol)
                     return
 
+                pkey = rsp["pkey"]
                 asset_class = rsp["asset_class"]
                 assert asset_class
+            else:
+                # Given schema, asset_class & integer pkey
+                pkey = symbol
             # endregion
 
             desired_table = AssetTable(asset_class, timeframe, False, False, rth)
-            src_table, need_to_calc = self.table_config[
-                Schema(schema)
-            ].get_select_from_table(desired_table)
+            try:
+                src_table, need_to_calc = self.table_config[
+                    Schema(schema)
+                ].get_selection_source_table(desired_table)
+            except AttributeError:
+                log.warning(
+                    "Cannot Aggregate timeframe %s for symbol %s from the data in the database",
+                    timeframe,
+                    symbol,
+                )
+                return None
 
             # Configure return args as a set
             if rtn_args is None:
                 _rtns = {"dt", "open", "high", "low", "close", "volume", "price"}
             else:
+                # sql formatting functions remove excess/ unkown args
                 _rtns = {*rtn_args}
 
             if need_to_calc:
@@ -811,6 +946,12 @@ class PsyscaleDB:
 
             cursor.execute(cmd)
             rsp = cursor.fetchall()
-            return None if len(rsp) == 0 else DataFrame(rsp[0])
+            if len(rsp) == 0:
+                return None
+            else:
+                _rtn = DataFrame(rsp[0])
+                # tz_convert to use an expected tz of 'UTC' over 'etc/utc'
+                _rtn["dt"] = _rtn["dt"].dt.tz_convert("UTC")
+                return _rtn
 
     # endregion

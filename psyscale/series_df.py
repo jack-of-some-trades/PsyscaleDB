@@ -41,9 +41,6 @@ def _standardize_names(df: pd.DataFrame):
     """
     Standardize the column names of the given dataframe to a consistent format for
     OHLC and Single Value Time-series. Changes are made inplace.
-
-    Niche data fields must be entered verbatim to be used.
-    (e.g. wickColor, lineColor, topFillColor1)
     """
     if isinstance(df.index, pd.DatetimeIndex):
         # In the event the timestamp is the index, reset it for naming
@@ -110,11 +107,7 @@ def _column_name_check(
 
 
 class Series_DF:
-    """
-    Distilled & Slightly Altered version of Series_DF from lightweight_pycharts.
-    Used to standardize column names and mark the Trading Hours Session using
-    pandas_market_calendars.
-    """
+    "Used to standardize column names and Mark EXT Session using pandas market calendars."
 
     def __init__(
         self,
@@ -239,6 +232,7 @@ class Calendars:
             return cal.name
 
         # Cached Calendar Requested
+        cal = self.mkt_cache[cal.name]
         sched = self.schedule_cache[cal.name]
         if sched.index[0] > start.tz_localize(None):
             # Extend Start of Schedule with an additional buffer
@@ -248,6 +242,7 @@ class Calendars:
             # Extend End of Schedule with an additional buffer
             extra_dates = cal.schedule(sched.index[-1] + pd.Timedelta("1D"), end)
             sched = pd.concat([sched, extra_dates])
+        self.schedule_cache[cal.name] = sched
 
         return cal.name
 
