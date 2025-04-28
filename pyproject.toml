@@ -18,6 +18,7 @@ packages = ["psyscale"]
 [dependency-groups]
 dev = [
     "alpaca-py>=0.39.4",
+    "coverage>=7.8.0",
     "pytest>=8.3.5",
     "python-dotenv>=1.1.0",
     "testcontainers>=4.10.0",

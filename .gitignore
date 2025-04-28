@@ -14,6 +14,7 @@ __pycache__
 
 # Development Testing Code #
 /examples/test.py
+/tests/htmlcov/*
 
 # Packages #
 ############
