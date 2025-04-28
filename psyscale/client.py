@@ -588,8 +588,8 @@ class PsyscaleDB:
                     "exchange",
                     "asset_class",
                 ],
-                filters=["symbol", "ILIKE", symbol],
-                limit=3,
+                filters=("symbol", "ILIKE", symbol),
+                _limit=3,
             )
         )
 

@@ -1,3 +1,4 @@
+import pytest
 from pandas import Timedelta, Timestamp
 from psyscale.dev import AssetTable
 
@@ -63,6 +64,11 @@ def test_asset_table_origin_fallback():
 
     at_htf = AssetTable("test", Timedelta("6W"), raw=False, ext=False, rth=None)
     assert at_htf.origin == str(at_htf.origin_ts)
+
+
+def test_interval_limit():
+    with pytest.raises(ValueError):
+        _ = AssetTable("test", Timedelta("1856.5s"), raw=False, ext=False, rth=None)
 
 
 # endregion

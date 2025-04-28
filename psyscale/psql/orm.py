@@ -132,6 +132,12 @@ class AssetTable:
         Format storage parameters into a series table name
         PARAMS:
         """
+        if self.period % Timedelta("1s") != Timedelta(0):
+            raise ValueError(
+                "Cannot Generate an Asset Table with a period that isn't a"
+                f" whole number of seconds. Given : {self.period}",
+            )
+
         self._table_name = (
             self.asset_class + "_" + str(int(self.period.total_seconds()))
         )
@@ -527,18 +533,31 @@ class TimeseriesConfig:
         the desired data from. When rtn_self == True this function can return the table passed
         if it is in the table config
         """
-        tbls = self.all_tables(desired_table.asset_class)
+        # Handle the case when requesting tick data separately.
+        # Timedelta == 0 interferes with the modulus operation
+        if desired_table.period == Timedelta(0):
+            tbls = self.raw_tables(desired_table.asset_class)
+            divisor_tbls = [tbl for tbl in tbls if tbl.period == Timedelta(0)]
+            if len(divisor_tbls) == 0:
+                raise AttributeError(
+                    "Requesting Tick Data from an Asset Class that has no Tick data"
+                )
+        else:
+            tbls = self.all_tables(desired_table.asset_class)
 
-        # All Tables that are an even period divider of what is desired
-        divisor_tbls = [
-            tbl for tbl in tbls if desired_table.period % tbl.period == Timedelta(0)
-        ]
+            # All Tables that are an even period divider of what is desired
+            divisor_tbls = [
+                tbl
+                for tbl in tbls
+                if tbl.period == Timedelta(0)
+                or desired_table.period % tbl.period == Timedelta(0)
+            ]
 
-        if len(divisor_tbls) == 0:
-            raise AttributeError(
-                f"Desired Table's Timeframe, {desired_table.period}, "
-                "cannot be derived from info in the database."
-            )
+            if len(divisor_tbls) == 0:
+                raise AttributeError(
+                    f"Desired Table's Timeframe, {desired_table.period}, "
+                    "cannot be derived from info in the database."
+                )
 
         if not rtn_self:
             # Ensure the desired table is removed from the pool of possible returns
@@ -591,7 +610,7 @@ class TimeseriesConfig:
         As a consequence, the desired_table's ext parameter is unused.
         """
         tbl = self.get_aggregation_source(desired_table, rtn_self=True)
-        return tbl, tbl != desired_table
+        return tbl, tbl.period != desired_table.period
 
     def get_tables_to_refresh(self, altered_table: AssetTable) -> List[AssetTable]:
         "Return all the tables that need to be refreshed for a given table that has been altered"
@@ -700,6 +719,10 @@ def _determine_conflicting_timedeltas(
     std_periods, rth_periods, eth_periods = [], [], []
 
     for period in periods:
+        if period == Timedelta(0):
+            std_periods.append(period)
+            continue
+
         remainder = eth_delta % period
         if remainder == Timedelta(0):
             std_periods.append(period)

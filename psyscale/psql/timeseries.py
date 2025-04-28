@@ -203,7 +203,8 @@ def create_continuous_tick_aggregate(
             else ""
         )
         + """
-        GROUP BY pkey, 1 ORDER BY 1;
+        GROUP BY pkey, 1 ORDER BY 1
+        WITH NO DATA;
         """
     ).format(
         schema_name=sql.Identifier(schema),
@@ -532,7 +533,7 @@ def select_aggregates(
     if rth and table.ext and table.rth is None:
         _filters.append(("rth", "=", 0))
 
-    if "rth" in rtn_args and table.ext and table.rth is None:
+    if "rth" in rtn_args and table.ext and table.rth is True:
         # 'rth' Doesn't exist in the table we are selecting from.
         rtn_args.remove("rth")
 
@@ -588,7 +589,7 @@ def calculate_aggregates(
         # 'rth' Doesn't exist in the table we are selecting from.
         rtn_args.remove("rth")
 
-    if timeframe == Timedelta(0):
+    if src_table.period == Timedelta(0):
         _inner_sel_args = _tick_inner_select_args(rtn_args)
     else:
         _inner_sel_args = _agg_inner_select_args(rtn_args)
