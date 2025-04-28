@@ -6,7 +6,7 @@ from pandas.testing import assert_series_equal, assert_frame_equal
 from psyscale.manager import PsyscaleMod
 from psyscale.dev import TimeseriesConfig
 from psyscale.dev import Schema
-from psyscale.psql.timeseries import AGGREGATE_ARGS, AggregateArgs
+from psyscale.psql.timeseries import AGGREGATE_ARGS
 from psyscale.series_df import Series_DF
 
 # region ---- ---- Test Fixtures ---- ----
@@ -144,6 +144,8 @@ def test_03_check_inserted_data(psyscale_db, caplog):
     metadata = psyscale_db.stored_symbol_metadata(aapl["pkey"])
     assert len(metadata) == 4  # One for inserted data, 3 more for the aggregates
 
+    minute_metadata = [m for m in metadata if m.timeframe == pd.Timedelta("1min")][0]
+
     # check that the full dataset got inserted
     raw_data = Series_DF(pd.read_csv("example_data/AAPL_1min.csv"), "NYSE")
     raw_data.df.drop(
@@ -157,6 +159,8 @@ def test_03_check_inserted_data(psyscale_db, caplog):
         pd.Timedelta("1min"),
         rth=False,
         rtn_args={"open", "high", "low", "close", "volume", "rth"},
+        asset_class=aapl["asset_class"],
+        schema=minute_metadata.schema_name,
     )
 
     # not sure why inserted_data returns a 'etc/UTC' tz_info
@@ -232,3 +236,65 @@ def test_04_upsert_on_conflict_states(psyscale_db, AAPL_MIN_DATA, caplog):
     psyscale_db.upsert_symbol_data(
         aapl["pkey"], metadata, AAPL_MIN_DATA.iloc[0:10], "NYSE", on_conflict="update"
     )
+
+
+def test_05_stored_aggregates(psyscale_db, caplog):
+    stored_data = psyscale_db.get_hist("aapl", pd.Timedelta("30min"), limit=10)
+    # fmt: off
+    expect_df = pd.DataFrame({
+        "dt": [
+            "2023-05-24 21:00:00+00:00",
+            "2023-05-24 21:30:00+00:00",
+            "2023-05-24 22:00:00+00:00",
+            "2023-05-24 22:30:00+00:00",
+            "2023-05-24 23:00:00+00:00",
+            "2023-05-24 23:30:00+00:00",
+            "2023-05-25 08:00:00+00:00",
+            "2023-05-25 08:30:00+00:00",
+            "2023-05-25 09:00:00+00:00",
+            "2023-05-25 09:30:00+00:00",
+        ],
+        "open": [171.68, 171.43, 171.61, 171.38, 171.18, 170.88, 171.37, 171.58, 171.72, 171.53],
+        "high": [171.69, 171.73, 171.69, 171.40, 171.18, 171.15, 171.80, 171.71, 171.75, 171.68],
+        "low": [171.30, 171.32, 171.22, 171.00, 170.85, 170.84, 171.37, 171.41, 171.52, 171.53],
+        "close": [171.42, 171.61, 171.31, 171.04, 170.88, 171.00, 171.58, 171.64, 171.54, 171.65],
+        "volume": [39688.0, 42391.0, 71238.0, 50434.0, 34025.0, 37182.0, 27388.0, 9683.0, 12406.0, 5810.0],
+    })
+    # fmt: on
+    expect_df["dt"] = pd.to_datetime(expect_df["dt"])
+    assert_frame_equal(stored_data, expect_df)
+
+
+def test_06_calculated_aggregates(psyscale_db, caplog):
+    stored_data = psyscale_db.get_hist("aapl", pd.Timedelta("15min"), limit=10)
+
+    # fmt: off
+    expect_df = pd.DataFrame({
+        "dt": [
+            "2023-05-24 21:15:00+00:00",
+            "2023-05-24 21:30:00+00:00",
+            "2023-05-24 21:45:00+00:00",
+            "2023-05-24 22:00:00+00:00",
+            "2023-05-24 22:15:00+00:00",
+            "2023-05-24 22:30:00+00:00",
+            "2023-05-24 22:45:00+00:00",
+            "2023-05-24 23:00:00+00:00",
+            "2023-05-24 23:15:00+00:00",
+            "2023-05-24 23:30:00+00:00",
+        ],
+        "open": [171.68, 171.43, 171.61, 171.61, 171.51, 171.38, 171.14, 171.18, 171.01, 170.88],
+        "high": [171.69, 171.70, 171.73, 171.69, 171.62, 171.40, 171.28, 171.18, 171.06, 171.15],
+        "low": [171.30, 171.32, 171.36, 171.37, 171.22, 171.00, 171.03, 170.90, 170.85, 170.84],
+        "close": [171.42, 171.65, 171.61, 171.63, 171.31, 171.20, 171.04, 171.00, 170.88, 171.14],
+        "volume": [39688.0, 17973.0, 24418.0, 37748.0, 33490.0, 27235.0, 23199.0, 19566.0, 14459.0, 13893.0],
+    })
+    # fmt: on
+    expect_df["dt"] = pd.to_datetime(expect_df["dt"])
+
+    assert_frame_equal(stored_data, expect_df)
+
+    with caplog.at_level("WARNING"):
+        stored_data = psyscale_db.get_hist("aapl", pd.Timedelta("7.5min"), limit=10)
+        assert stored_data is None
+    # should raise a warning message that the data cannot be derived from the stored data
+    assert any(r.levelname == "WARNING" for r in caplog.records)
