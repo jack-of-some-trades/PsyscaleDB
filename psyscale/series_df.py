@@ -4,12 +4,14 @@ Class Standardizes Column Names & uses pandas_market_calendars
 to determine the Trading Hours session.
 """
 
+from importlib import import_module
 import logging
 from functools import partial
-from typing import Dict, Optional
+from types import ModuleType
+from typing import TYPE_CHECKING, Dict, Optional
 
 import pandas as pd
-import pandas_market_calendars as mcal
+
 
 log = logging.getLogger("psyscale_log")
 
@@ -173,14 +175,11 @@ class Series_DF:
 
 # region --------------------------- Pandas_Market_Calendars Adapter --------------------------- #
 
-EXCHANGE_NAMES = dict([(val.lower(), val) for val in mcal.get_calendar_names()])
-# Hard-Coded Alternate Names that might be passed as Exchange arguments
-ALT_EXCHANGE_NAMES = {
-    "xnas": "NASDAQ",
-    "arca": "NYSE",
-    "forex": "24/5",
-    "crypto": "24/7",
-}
+if TYPE_CHECKING:
+    import pandas_market_calendars as mcal
+    from pandas_market_calendars import MarketCalendar
+else:
+    mcal: Optional[ModuleType] = None
 
 
 class Calendars:
@@ -193,21 +192,41 @@ class Calendars:
     to a significant performance improvement.
     """
 
+    EXCHANGE_NAMES = {}
+    ALT_EXCHANGE_NAMES = {
+        "xnas": "NASDAQ",
+        "arca": "NYSE",
+        "forex": "24/5",
+        "crypto": "24/7",
+    }
+
     def __init__(self):
-        self.mkt_cache: Dict[str, mcal.MarketCalendar] = {}
+        self.mkt_cache: Dict[str, MarketCalendar] = {}
         self.schedule_cache: Dict[str, pd.DataFrame] = {}
+
+    def _import_mcal(self):
+        # Lazy load Pandas_market_calendars
+        # pylint: disable-next='global-statement'
+        global mcal
+        mcal = import_module("pandas_market_calendars")
+        self.EXCHANGE_NAMES = dict(
+            [(val.lower(), val) for val in mcal.get_calendar_names()]
+        )
 
     def request_calendar(
         self, exchange: Optional[str], start: pd.Timestamp, end: pd.Timestamp
     ) -> str:
         "Request a Calendar & Schedule be Cached. Returns a token to access the cached calendar"
-        if mcal is None or exchange is None:
+        if mcal is None:
+            self._import_mcal()
+
+        if exchange is None:
             return "24/7"
         exchange = exchange.lower()
-        if exchange in ALT_EXCHANGE_NAMES:
-            cal = mcal.get_calendar(ALT_EXCHANGE_NAMES[exchange])
-        elif exchange in EXCHANGE_NAMES:
-            cal = mcal.get_calendar(EXCHANGE_NAMES[exchange])
+        if exchange in self.ALT_EXCHANGE_NAMES:
+            cal = mcal.get_calendar(self.ALT_EXCHANGE_NAMES[exchange])
+        elif exchange in self.EXCHANGE_NAMES:
+            cal = mcal.get_calendar(self.EXCHANGE_NAMES[exchange])
         else:
             cal = None
             log.warning(
@@ -258,6 +277,7 @@ class Calendars:
         )
 
 
-# Initialize the shared Calendars sudo-singleton
+# Prep the shared Calendars sudo-singleton, will init when needed
 CALENDARS = Calendars()
+
 # endregion
