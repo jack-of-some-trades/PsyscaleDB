@@ -8,8 +8,7 @@ import dotenv
 
 from broker_apis.alpaca_api import AlpacaAPI
 
-from psyscale import set_psyscale_log_level
-from psyscale.manager import PsyscaleMod
+from psyscale import PsyscaleDB, set_psyscale_log_level
 
 dotenv.load_dotenv(dotenv.find_dotenv())
 
@@ -19,12 +18,12 @@ log = logging.getLogger("psyscale_log")
 
 def main():
     on_conflict: Literal["ignore", "update"] = "update"
-    db = PsyscaleMod()
+    db = PsyscaleDB()
 
     _import_alpaca(db, on_conflict)
 
 
-def _import_alpaca(db: PsyscaleMod, on_conflict: Literal["ignore", "update"]):
+def _import_alpaca(db: PsyscaleDB, on_conflict: Literal["ignore", "update"]):
     """
     Inserts securities from alpaca separating them into asset_classes US_Stock, US_Fund, & Crypto
     Updates are not dynamic, they're forced when a Symbol & Exchange pair are already in the table.

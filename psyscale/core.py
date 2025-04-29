@@ -95,7 +95,6 @@ class PsyscaleConnectParams:
         query_str = f"?{'&'.join(query_params)}" if query_params else ""
 
         self.url = f"postgresql://{user_info}{self.host}:{self.port}/{self.database}{query_str}"
-        log.info(self.url)
 
     @classmethod
     def from_url(cls, url: str) -> Self:
