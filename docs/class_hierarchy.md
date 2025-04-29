@@ -17,22 +17,25 @@ classDiagram
         -_init_and_start_localdb()
         -_read_db_timeseries_config()
         -_ensure_schemas_exist()
-        -_ensure_securities_schema_format()
     }
 
     class MetadataPartial {
+        -_table_config
         +symbol_metadata()
         +manually_refresh_aggregate_metadata(): CLI Script
         -_manual_refresh_loop(): CLI Script
     }
 
     class SymbolsPartial {
+        +__init__()
         +upsert_securities()
         +search_symbols()
         +update_symbol()
+        -_ensure_securities_schema_format()
     }
     
     class SeriesDataPartial {
+        -_table_config
         -_altered_tables
         -_altered_tables_mdata
 
@@ -43,6 +46,7 @@ classDiagram
     }
 
     class ConfigureTimeseriesPartial {
+        -_table_config
         +configure_timeseries_schema(): CLI Script
     }
 

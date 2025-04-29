@@ -221,8 +221,7 @@ class PsyscaleCore:
 
         self.cmds = Commands()
         self.conn_params = conn_params
-        self._ensure_schemas_exist()
-        self._ensure_securities_schema_format()
+        self._ensure_std_schemas_exist()
         self._read_db_timeseries_config()
 
     def __getitem__(self, args: Tuple[Op, StrEnum]) -> Callable[..., sql.Composed]:
@@ -524,7 +523,7 @@ class PsyscaleCore:
                 "PsyscaleDB.configure_timeseries_schema() with the appropriate arguments.\n"
             )
 
-    def _ensure_schemas_exist(self):
+    def _ensure_std_schemas_exist(self):
         with self._cursor() as cursor:
             cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA]())
             schemas: set[str] = {rsp[0] for rsp in cursor.fetchall()}
@@ -532,26 +531,6 @@ class PsyscaleCore:
             for schema in {v for v in Schema}.difference(schemas):
                 log.info("Creating Schema %s", schema)
                 cursor.execute(self[Op.CREATE, GenericTbls.SCHEMA](schema))
-
-    def _ensure_securities_schema_format(self):
-        with self._cursor() as cursor:
-            cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA_TABLES](Schema.SECURITY))
-            tables: set[str] = {rsp[0] for rsp in cursor.fetchall()}
-
-            if AssetTbls.SYMBOLS not in tables:
-                # Init Symbols Table & pg_trgm Text Search Functions
-                log.info("Creating Table '%s'.'%s'", Schema.SECURITY, AssetTbls.SYMBOLS)
-                cursor.execute(self[Op.CREATE, AssetTbls._SYMBOL_SEARCH_FUNCS]())
-                cursor.execute(self[Op.CREATE, AssetTbls.SYMBOLS]())
-
-            # Init Symbol Data Range Metadata table & support function
-            log.debug(
-                "Ensuring Table '%s'.'%s' Exists",
-                Schema.SECURITY,
-                AssetTbls._METADATA,
-            )
-            cursor.execute(self[Op.CREATE, AssetTbls._METADATA_FUNC]())
-            cursor.execute(self[Op.CREATE, AssetTbls._METADATA]())
 
     def _get_pkey(self, symbol: str | int) -> int | None:
         if isinstance(symbol, int):

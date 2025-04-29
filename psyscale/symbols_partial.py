@@ -4,11 +4,12 @@ import logging
 from typing import (
     Literal,
     Any,
+    Optional,
     Tuple,
 )
 from pandas import DataFrame, Series
 from psycopg import sql
-from psyscale.core import PsyscaleCore
+from psyscale.core import PsyscaleConnectParams, PsyscaleCore
 
 from .psql import (
     SYMBOL_ARGS,
@@ -16,13 +17,52 @@ from .psql import (
     SymbolArgs,
     Operation as Op,
     AssetTbls,
+    Schema,
+    GenericTbls,
 )
 
+# pylint: disable='protected-access'
 log = logging.getLogger("psyscale_log")
 
 
 class SymbolsPartial(PsyscaleCore):
     "Psyscale Symbols Table upsert and search functions"
+
+    def __init__(
+        self,
+        conn_params: Optional[PsyscaleConnectParams | str] = None,
+        *,
+        down_on_del: bool = False,
+        docker_compose_fpath: Optional[str] = None,
+    ):
+        # Chain the __init__ Docstring up the MRO since nothing changed
+        self.__class__.__init__.__doc__ = super().__init__.__doc__
+        super().__init__(
+            conn_params,
+            down_on_del=down_on_del,
+            docker_compose_fpath=docker_compose_fpath,
+        )
+        self._ensure_securities_schema_format()
+
+    def _ensure_securities_schema_format(self):
+        with self._cursor() as cursor:
+            cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA_TABLES](Schema.SECURITY))
+            tables: set[str] = {rsp[0] for rsp in cursor.fetchall()}
+
+            if AssetTbls.SYMBOLS not in tables:
+                # Init Symbols Table & pg_trgm Text Search Functions
+                log.info("Creating Table '%s'.'%s'", Schema.SECURITY, AssetTbls.SYMBOLS)
+                cursor.execute(self[Op.CREATE, AssetTbls._SYMBOL_SEARCH_FUNCS]())
+                cursor.execute(self[Op.CREATE, AssetTbls.SYMBOLS]())
+
+            # Init Symbol Data Range Metadata table & support function
+            log.debug(
+                "Ensuring Table '%s'.'%s' Exists",
+                Schema.SECURITY,
+                AssetTbls._METADATA,
+            )
+            cursor.execute(self[Op.CREATE, AssetTbls._METADATA_FUNC]())
+            cursor.execute(self[Op.CREATE, AssetTbls._METADATA]())
 
     def upsert_securities(
         self,
