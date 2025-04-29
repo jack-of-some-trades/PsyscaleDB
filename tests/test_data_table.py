@@ -3,11 +3,11 @@ import pytest
 import pandas as pd
 from pandas.testing import assert_series_equal, assert_frame_equal
 
-from psyscale.manager import PsyscaleMod
 from psyscale.dev import TimeseriesConfig
 from psyscale.dev import Schema
 from psyscale.psql.timeseries import AGGREGATE_ARGS
 from psyscale.series_df import Series_DF
+from psyscale import PsyscaleDB
 
 # region ---- ---- Test Fixtures ---- ----
 
@@ -57,7 +57,7 @@ TICK_CONFIG = TimeseriesConfig(
 @pytest.fixture(scope="module")
 def psyscale_db(test_url):
     "Module level PsyscaleMod that inits a couple symbols and the needed timeseries config"
-    db = PsyscaleMod(test_url)
+    db = PsyscaleDB(test_url)
     db.configure_timeseries_schema(minute_tables=MINUTE_CONFIG, tick_tables=TICK_CONFIG)
     db.upsert_securities(
         pd.DataFrame(
@@ -86,7 +86,7 @@ def psyscale_db(test_url):
     yield db
 
 
-def test_01_metadata_fetch(psyscale_db):
+def test_01_metadata_fetch(psyscale_db: PsyscaleDB):
     symbols_to_insert = psyscale_db.search_symbols({"store": True})
     assert len(symbols_to_insert) == 2
 
@@ -98,11 +98,11 @@ def test_01_metadata_fetch(psyscale_db):
     aapl_pkey = aapl["pkey"]
 
     # No Data inserted yet, MetaData should be empty
-    metadata = psyscale_db.stored_symbol_metadata(aapl_pkey)
+    metadata = psyscale_db.symbol_metadata(aapl_pkey)
     assert len(metadata) == 0
 
     # Should show that we need to store data in the Minute table of minute schema
-    metadata = psyscale_db.get_all_symbol_series_metadata(aapl_pkey)
+    metadata = psyscale_db.symbol_metadata(aapl_pkey, _all=True)
     assert len(metadata) == 1
     metadata = metadata[0]
 
@@ -115,18 +115,18 @@ def test_01_metadata_fetch(psyscale_db):
 # region ---- ---- Aggregate Data Tests ---- ----
 
 
-def test_02_aggregate_data_insert(psyscale_db, caplog, AAPL_MIN_DATA):
+def test_02_aggregate_data_insert(psyscale_db: PsyscaleDB, caplog, AAPL_MIN_DATA):
     # pkey and metadata fetch already asserted working in first test.
     aapl = psyscale_db.search_symbols({"store_minute": True})[0]
-    metadata = psyscale_db.get_all_symbol_series_metadata(aapl["pkey"])[0]
+    metadata = psyscale_db.symbol_metadata(aapl["pkey"], _all=True)[0]
 
     with pytest.raises(ValueError):
         # Should error since a 'rth' column is needed but not given.
-        psyscale_db.upsert_symbol_data(aapl["pkey"], metadata, AAPL_MIN_DATA, None)
+        psyscale_db.upsert_series(aapl["pkey"], metadata, AAPL_MIN_DATA, None)
 
     with pytest.raises(AttributeError):
         # Should error since a column is missing
-        psyscale_db.upsert_symbol_data(
+        psyscale_db.upsert_series(
             aapl["pkey"], metadata, AAPL_MIN_DATA.drop(columns="date"), None
         )
 
@@ -137,7 +137,7 @@ def test_02_aggregate_data_insert(psyscale_db, caplog, AAPL_MIN_DATA):
     # Should Work, renames columns and all (column renaming tests in series_df tests)
     # And Dropps Extra Columns
     with caplog.at_level("DEBUG"):
-        psyscale_db.upsert_symbol_data(aapl["pkey"], metadata, AAPL_MIN_DATA, "NYSE")
+        psyscale_db.upsert_series(aapl["pkey"], metadata, AAPL_MIN_DATA, "NYSE")
 
     # Assert there was no cursor error in the upsert function.
     assert all(record.levelname != "ERROR" for record in caplog.records)
@@ -147,12 +147,12 @@ def test_02_aggregate_data_insert(psyscale_db, caplog, AAPL_MIN_DATA):
     assert hasattr(psyscale_db, "_altered_tables_mdata")
 
 
-def test_03_check_inserted_data(psyscale_db, caplog):
+def test_03_check_inserted_data(psyscale_db: PsyscaleDB, caplog):
     aapl = psyscale_db.search_symbols({"store_minute": True})[0]
 
     # Data is stored, but the metadata table should not reflect this yet.
     # it should only show this once the refresh data has been called.
-    metadata = psyscale_db.stored_symbol_metadata(aapl["pkey"])
+    metadata = psyscale_db.symbol_metadata(aapl["pkey"])
     assert len(metadata) == 0
 
     assert hasattr(psyscale_db, "_altered_tables")
@@ -166,7 +166,7 @@ def test_03_check_inserted_data(psyscale_db, caplog):
     assert not hasattr(psyscale_db, "_altered_tables_mdata")
 
     # check what's available
-    metadata = psyscale_db.stored_symbol_metadata(aapl["pkey"])
+    metadata = psyscale_db.symbol_metadata(aapl["pkey"])
     assert len(metadata) == 4  # One for inserted data, 3 more for the aggregates
 
     minute_metadata = [m for m in metadata if m.timeframe == pd.Timedelta("1min")][0]
@@ -179,7 +179,7 @@ def test_03_check_inserted_data(psyscale_db, caplog):
     raw_data.df.set_index(keys=pd.RangeIndex(0, 2083), inplace=True)
     raw_data.df["rth"] = raw_data.df["rth"].astype("int64")
 
-    inserted_data = psyscale_db.get_hist(
+    inserted_data = psyscale_db.get_series(
         aapl["pkey"],
         pd.Timedelta("1min"),
         rth=False,
@@ -187,6 +187,7 @@ def test_03_check_inserted_data(psyscale_db, caplog):
         asset_class=aapl["asset_class"],
         schema=minute_metadata.schema_name,
     )
+    assert inserted_data is not None
 
     for col in raw_data.columns:
         assert_series_equal(raw_data.df[col], inserted_data[col])
@@ -195,20 +196,21 @@ def test_03_check_inserted_data(psyscale_db, caplog):
     raw_data.df = raw_data.df[raw_data.df["rth"] == 0]
     raw_data.df.set_index(keys=pd.RangeIndex(0, 780), inplace=True)
 
-    inserted_data = psyscale_db.get_hist(
+    inserted_data = psyscale_db.get_series(
         aapl["pkey"],
         pd.Timedelta("1min"),
         rth=True,
         rtn_args={"open", "high", "low", "close", "volume", "rth"},
     )
+    assert inserted_data is not None
 
     for col in raw_data.columns:
         assert_series_equal(raw_data.df[col], inserted_data[col])
 
 
-def test_04_upsert_on_conflict_states(psyscale_db, AAPL_MIN_DATA, caplog):
+def test_04_upsert_on_conflict_states(psyscale_db: PsyscaleDB, AAPL_MIN_DATA, caplog):
     aapl = psyscale_db.search_symbols({"store_minute": True})[0]
-    metadata = psyscale_db.get_all_symbol_series_metadata(aapl["pkey"])[0]
+    metadata = psyscale_db.symbol_metadata(aapl["pkey"])[0]
 
     alt_data = Series_DF(AAPL_MIN_DATA, "NYSE").df
     extra_cols = set(alt_data.columns).difference(AGGREGATE_ARGS)
@@ -221,18 +223,19 @@ def test_04_upsert_on_conflict_states(psyscale_db, AAPL_MIN_DATA, caplog):
     alt_data.loc[0, "volume"] = -1
 
     with pytest.raises(DatabaseError):
-        psyscale_db.upsert_symbol_data(
+        psyscale_db.upsert_series(
             aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="error"
         )
 
     with caplog.at_level("WARNING"):
-        psyscale_db.upsert_symbol_data(
+        psyscale_db.upsert_series(
             aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="ignore"
         )
     assert any(r.levelname == "WARNING" for r in caplog.records)
-    stored_data = psyscale_db.get_hist(
+    stored_data = psyscale_db.get_series(
         aapl["pkey"], pd.Timedelta("1min"), rth=False, limit=10
     )
+    assert stored_data is not None
 
     assert stored_data["dt"].iloc[0] == alt_data["dt"].iloc[0]
     assert stored_data.iloc[0]["low"] != alt_data.iloc[0]["low"]
@@ -241,25 +244,28 @@ def test_04_upsert_on_conflict_states(psyscale_db, AAPL_MIN_DATA, caplog):
     assert stored_data.iloc[0]["close"] != alt_data.iloc[0]["close"]
     assert stored_data.iloc[0]["volume"] != alt_data.iloc[0]["volume"]
 
-    psyscale_db.upsert_symbol_data(
+    psyscale_db.upsert_series(
         aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="update"
     )
-    stored_data = psyscale_db.get_hist(
+    stored_data = psyscale_db.get_series(
         aapl["pkey"], pd.Timedelta("1min"), rth=False, limit=10
     )
+    assert stored_data is not None
 
     assert stored_data["dt"].iloc[0] == alt_data["dt"].iloc[0]
     assert_series_equal(stored_data.iloc[0], alt_data.iloc[0])
 
     # Re-insert & clean the original data for use in following tests
-    psyscale_db.upsert_symbol_data(
+    psyscale_db.upsert_series(
         aapl["pkey"], metadata, AAPL_MIN_DATA.iloc[0:10], "NYSE", on_conflict="update"
     )
     psyscale_db.refresh_aggregate_metadata()
 
 
-def test_05_stored_aggregates(psyscale_db, caplog):
-    stored_data = psyscale_db.get_hist("aapl", pd.Timedelta("30min"), limit=10)
+def test_05_stored_aggregates(psyscale_db: PsyscaleDB, caplog):
+    stored_data = psyscale_db.get_series("aapl", pd.Timedelta("30min"), limit=10)
+    assert stored_data is not None
+
     # fmt: off
     expect_df = pd.DataFrame({
         "dt": [
@@ -285,8 +291,9 @@ def test_05_stored_aggregates(psyscale_db, caplog):
     assert_frame_equal(stored_data, expect_df)
 
 
-def test_06_calculated_aggregates(psyscale_db, caplog):
-    stored_data = psyscale_db.get_hist("aapl", pd.Timedelta("15min"), limit=10)
+def test_06_calculated_aggregates(psyscale_db: PsyscaleDB, caplog):
+    stored_data = psyscale_db.get_series("aapl", pd.Timedelta("15min"), limit=10)
+    assert stored_data is not None
 
     # fmt: off
     expect_df = pd.DataFrame({
@@ -314,7 +321,7 @@ def test_06_calculated_aggregates(psyscale_db, caplog):
     assert_frame_equal(stored_data, expect_df)
 
     with caplog.at_level("WARNING"):
-        stored_data = psyscale_db.get_hist("aapl", pd.Timedelta("7.5min"), limit=10)
+        stored_data = psyscale_db.get_series("aapl", pd.Timedelta("7.5min"), limit=10)
         assert stored_data is None
     # should raise a warning message that the data cannot be derived from the stored data
     assert any(r.levelname == "WARNING" for r in caplog.records)
@@ -325,18 +332,18 @@ def test_06_calculated_aggregates(psyscale_db, caplog):
 # region ---- ---- Tick Data Tests ---- ----
 
 
-def test_07_tick_data_insert(psyscale_db, caplog, TICK_DATA):
+def test_07_tick_data_insert(psyscale_db: PsyscaleDB, caplog, TICK_DATA):
     # pkey and metadata fetch already asserted working in first test.
     goog = psyscale_db.search_symbols({"symbol": "goog"})[0]
-    metadata = psyscale_db.get_all_symbol_series_metadata(goog["pkey"])[0]
+    metadata = psyscale_db.symbol_metadata(goog["pkey"], _all=True)[0]
 
     with pytest.raises(ValueError):
         # Should error since a 'rth' column is needed but not given.
-        psyscale_db.upsert_symbol_data(goog["pkey"], metadata, TICK_DATA, None)
+        psyscale_db.upsert_series(goog["pkey"], metadata, TICK_DATA, None)
 
     with pytest.raises(AttributeError):
         # Should error since a column is missing
-        psyscale_db.upsert_symbol_data(
+        psyscale_db.upsert_series(
             goog["pkey"], metadata, TICK_DATA.drop(columns="time"), None
         )
 
@@ -347,7 +354,7 @@ def test_07_tick_data_insert(psyscale_db, caplog, TICK_DATA):
     # Should Work, renames columns and all (column renaming tests in series_df tests)
     # And Dropps Extra Columns
     with caplog.at_level("DEBUG"):
-        psyscale_db.upsert_symbol_data(goog["pkey"], metadata, TICK_DATA, "NYSE")
+        psyscale_db.upsert_series(goog["pkey"], metadata, TICK_DATA, "NYSE")
 
     # Assert there was no cursor error in the upsert function.
     assert all(record.levelname != "ERROR" for record in caplog.records)
@@ -357,12 +364,12 @@ def test_07_tick_data_insert(psyscale_db, caplog, TICK_DATA):
     assert hasattr(psyscale_db, "_altered_tables_mdata")
 
 
-def test_08_check_inserted_tick_data(psyscale_db):
+def test_08_check_inserted_tick_data(psyscale_db: PsyscaleDB):
     goog = psyscale_db.search_symbols({"store_tick": True})[0]
 
     # Data is stored, but the metadata table should not reflect this yet.
     # it should only show this once the refresh data has been called.
-    metadata = psyscale_db.stored_symbol_metadata(goog["pkey"])
+    metadata = psyscale_db.symbol_metadata(goog["pkey"])
     assert len(metadata) == 0
 
     assert hasattr(psyscale_db, "_altered_tables")
@@ -375,7 +382,7 @@ def test_08_check_inserted_tick_data(psyscale_db):
     assert not hasattr(psyscale_db, "_altered_tables_mdata")
 
     # check what's available
-    metadata = psyscale_db.stored_symbol_metadata(goog["pkey"])
+    metadata = psyscale_db.symbol_metadata(goog["pkey"])
     assert len(metadata) == 3  # One for inserted data, 3 more for the aggregates
 
     # check that the full dataset got inserted
@@ -386,18 +393,22 @@ def test_08_check_inserted_tick_data(psyscale_db):
     raw_data.df.set_index(keys=pd.RangeIndex(0, 2465), inplace=True)
     raw_data.df["rth"] = raw_data.df["rth"].astype("int64")
 
-    inserted_data = psyscale_db.get_hist(
+    inserted_data = psyscale_db.get_series(
         goog["pkey"],
         pd.Timedelta(0),
         rth=False,
         rtn_args={"volume", "rth", "price"},
     )
+    assert inserted_data is not None
+
     for col in raw_data.columns:
         assert_series_equal(raw_data.df[col], inserted_data[col])
 
 
-def test_09_stored_tick_aggregates(psyscale_db):
-    stored_data = psyscale_db.get_hist("goog", pd.Timedelta("15s"), limit=10)
+def test_09_stored_tick_aggregates(psyscale_db: PsyscaleDB):
+    stored_data = psyscale_db.get_series("goog", pd.Timedelta("15s"), limit=10)
+    assert stored_data is not None
+
     # fmt: off
     expected_df = pd.DataFrame({
         "dt": [
@@ -423,13 +434,15 @@ def test_09_stored_tick_aggregates(psyscale_db):
     assert_frame_equal(stored_data, expected_df)
 
 
-def test_10_calculated_tick_aggregates(psyscale_db):
+def test_10_calculated_tick_aggregates(psyscale_db: PsyscaleDB):
 
     with pytest.raises(ValueError):
         # Cannot due intervals that are not multiples of one second
-        stored_data = psyscale_db.get_hist("goog", pd.Timedelta("17.5s"), limit=10)
+        stored_data = psyscale_db.get_series("goog", pd.Timedelta("17.5s"), limit=10)
 
-    stored_data = psyscale_db.get_hist("goog", pd.Timedelta("7s"), limit=10)
+    stored_data = psyscale_db.get_series("goog", pd.Timedelta("7s"), limit=10)
+    assert stored_data is not None
+
     # fmt: off
     df = pd.DataFrame({
         "dt": [

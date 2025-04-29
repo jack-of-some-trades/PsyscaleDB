@@ -12,20 +12,18 @@ from contextlib import contextmanager
 from typing import (
     Callable,
     Dict,
-    Iterable,
     Iterator,
     List,
     Literal,
     Mapping,
     Optional,
-    Any,
     Self,
     Tuple,
     TypeAlias,
     overload,
 )
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
-from pandas import DataFrame, Timedelta, Timestamp
+from pandas import Timestamp
 
 import psycopg as pg
 import psycopg.rows as pg_rows
@@ -34,14 +32,6 @@ from psycopg.pq._enums import ExecStatus
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from .psql import (
-    SYMBOL_ARGS,
-    METADATA_ARGS,
-    STRICT_SYMBOL_ARGS,
-    TickArgs,
-    SymbolArgs,
-    AggregateArgs,
-    MetadataArgs,
-    MetadataInfo,
     GenericTbls,
     Operation as Op,
     OperationMap,
@@ -49,7 +39,6 @@ from .psql import (
     AssetTbls,
     SeriesTbls,
     Commands,
-    AssetTable,
     TimeseriesConfig,
 )
 
@@ -156,29 +145,18 @@ class PsyscaleConnectParams:
         return inst
 
 
-class PsyscaleDB:
+class PsyscaleCore:
     """
-    A Python client interface for connecting to a PostgreSQL Database in a (mostly) read-only mode.
-
-    Timescale DB Docker self-host instructions
-    https://docs.timescale.com/self-hosted/latest/install/installation-docker/
+    Core Synchronous client interface for connecting to a PostgreSQL Database.
 
     This class contains all the necessary functionality needed to interact
     with the Database at runtime. If provided environment variables that point to
     a local host, the initializer will start/create the docker container as needed.
 
-    This class instance doesn't strictly prohibit write (Insert/Update/Delete) commands. However,
-    it lacks functionality to streamline the symbol and data insertion process. These additional
-    functions are accessible through the PsyscaleMod sub-class.
-
     Additional functionality (Such as one-off configuration scripts, Data Insertion, etc.)
-    are handled by the PsyscaleMod Subclass. This is done to de-clutter the
+    are handled by the Psyscale Partial Classes. This is done to organize the
     exceedingly large amount of functionality that is needed to manage a Database.
     """
-
-    # This division of labor is done for two reasons.
-    # 1: Separates & Organizes the large amt. of functions so it's not all in a single class
-    # 2: It lazy loads all of that extra functionality, most notably, pandas_market_calendars.
 
     def __init__(
         self,
@@ -494,7 +472,7 @@ class PsyscaleDB:
 
     def _read_db_timeseries_config(self):
         "Read off the TimeseriesConfig for each schema by probing all the table names."
-        self.table_config: Dict[Schema, TimeseriesConfig] = {}
+        self._table_config: Dict[Schema, TimeseriesConfig] = {}
 
         with self._cursor() as cursor:
             for schema in (Schema.TICK_DATA, Schema.MINUTE_DATA, Schema.AGGREGATE_DATA):
@@ -522,7 +500,7 @@ class PsyscaleDB:
                     if rsp[0] != SeriesTbls._ORIGIN.value
                 ]
                 config = TimeseriesConfig.from_table_names(tbl_names, origin_map)
-                self.table_config[schema] = config
+                self._table_config[schema] = config
 
                 # ---- ---- Check that all the origin times are preset ---- ----
                 missing_asset_origins = set(config.asset_classes).difference(
@@ -537,12 +515,13 @@ class PsyscaleDB:
                     )
 
         # Give a notification on how to setup the database if it appears like it hasn't been
-        all_assets = {chain(map(lambda x: x.asset_classes, self.table_config.values()))}
+        all_assets = {
+            chain(map(lambda x: x.asset_classes, self._table_config.values()))
+        }
         if len(all_assets) == 0:
             log.warning(
                 "No Asset Types Detected in the Database. To Initialize the Database call "
-                "TimescaleDBEXT__configure_db_format__() with the appropriate arguments.\n"
-                "See timescale_ext.py for necessary class extention and an Example Configuration."
+                "PsyscaleDB.configure_timeseries_schema() with the appropriate arguments.\n"
             )
 
     def _ensure_schemas_exist(self):
@@ -602,356 +581,5 @@ class PsyscaleDB:
             )
 
         return None if len(rsp) == 0 else rsp[0][0]
-
-    # endregion
-
-    # region ----------- Public Database Interaction Methods -----------
-
-    def search_symbols(
-        self,
-        filter_args: dict[SymbolArgs | str, Any],
-        return_attrs: bool = False,
-        attrs_search: bool = False,
-        limit: int | None = 100,
-        *,
-        strict_symbol_search: bool | Literal["ILIKE", "LIKE", "="] = False,
-    ) -> list[dict]:
-        """
-        Search the database's symbols table returning all the symbols that match the given criteria.
-        Search function supports trigram based fuzzy name + symbol search.
-
-        -- PARAMS --
-        - filter_args: dict[SymbolArgs | str : Any]
-            - The filtering arguments that need to be matched against. By default only the keys that
-            match the table column names (SymbolArgs Literal, e.g. pkey, name, symbol, etc.) will be
-            used.
-            - All Arguments aside from 'name' and 'symbol' will be used in a strict '=' comparison
-            filter. 'name' will always be used in a fuzzystr trigram search where the results are
-            ordered by relevancy. by default, 'symbol' will also be a fuzzystr trigram search.
-            - When a 'pkey' filter is given, all other filter keys are ignored and the table is
-            searched for the given integer pkey. This is because, by table definition, the pkey
-            will be unique and can only ever return a single row.
-            - Additional argument keys  that are not column names of the table (Not in SymbolArgs
-            Literal) will be ignored by default. See attrs_search for more on this behavior.
-
-        - return_attrs: boolean.
-            - When True return an 'attrs' dictionary that has all additional attributes of the
-            symbol that are stored in the 'attrs' column of the table.
-
-        - attrs_search: boolean.
-            - When True any additional keys that are given as filters args, but not recognized as
-            table columns, will be used in a strict search against that 'attrs' JSON Column of the
-            table.
-            - When False additional keys within the filter_args are ignored.
-            - i.e. when true, if {'shortable':True} is passed in filter_args then only rows that
-            have a defined 'shortable'= True Attrubute will be returned.
-            - This search will only ever be a strict '=' comparison, so if searching for a string
-            or int the value given must be exact.
-
-        - limit: int
-            - The Optional Integer limit of symbol results to return.
-
-        - strict_symbol_search: Boolean | Literal["ILIKE", "LIKE", "="] : default False.
-            - When False a fuzzystr trigram search is used and the results are ordered by relevancy.
-            Even if an exact match for the symbol is returned, this will still result in other
-            similar symbols being returned.
-            - When not False the symbol search will use the given PostgreSQL comparator. True
-            equates to passing 'ILIKE' Which ignores case.
-            - This is far more useful when passing a symbol with wildcard args. e.g.
-            'ILIKE' + {symbol:'sp'} will likely not return results, 'ILIKE' + {symbol:'sp%'}
-            will return all symbols starting with 'SP', case insensitive.
-        """
-
-        if "pkey" in filter_args:
-            # Fast Track PKEY Searches since there will only ever be 1 symbol returned
-            filters = [("pkey", "=", filter_args["pkey"])]
-            name, symbol, attrs, limit = None, None, None, 1
-        else:
-            filters = [
-                (k, "=", v) for k, v in filter_args.items() if k in STRICT_SYMBOL_ARGS
-            ]
-
-            name = filter_args.get("name", None)
-            symbol = filter_args.get("symbol", None)
-
-            if strict_symbol_search and symbol is not None:
-                # Determine if symbol is passed as a strict or fuzzy parameter
-                compare_method = (
-                    strict_symbol_search
-                    if isinstance(strict_symbol_search, str)
-                    else "ILIKE"  # Default search for similar symbols that match ignoring case.
-                )
-                filters.append(("symbol", compare_method, symbol))
-                symbol = None  # Prevents the 'similarity' search from being added
-
-            # Filter all extra given filter params into a separate dict
-            attrs = (
-                dict((k, v) for k, v in filter_args.items() if k not in SYMBOL_ARGS)
-                if attrs_search
-                else None
-            )
-            if attrs and len(attrs) == 0:
-                attrs = None
-
-        with self._cursor(dict_cursor=True) as cursor:
-            cursor.execute(
-                self[Op.SELECT, AssetTbls.SYMBOLS](
-                    name, symbol, filters, return_attrs, attrs, limit
-                )
-            )
-            return cursor.fetchall()
-
-    def update_symbol(
-        self, symbols: int | str | list[int | str], args: dict[SymbolArgs | str, Any]
-    ) -> bool:
-        """
-        Update a Single Symbol or list of symbols with the given arguments.
-
-        This method is remained general for utility purposes. It should generally just be used to
-        update the stored_[tick/minute/aggregate] columns. All Other parameters should remain
-        constant by nature. To insert symbols see the API_Extension that allows this to be done
-        in bulk.
-
-        Note: Setting any stored column = False does not Delete any Data.
-
-        :params:
-        - symobls : int, str, or list[int | str]
-            - Identifying symbol (str) or primary key (int) of the symbol to update.
-            May be a single value or list of values.
-            - Interger Pkeys are preferred method since multiple rows of the same symbol may be
-            inserted into the database. Unique Symbol collisions only occur on conflicting
-            (symbol, exchange, source) combinations while pkeys are always unique.
-
-        - args : Dict[SymbolArgs, Any]
-            - A Dictionary of Column Values to update. If PKEY is passed as a Key it will be
-            ignored. Extra Keys are Ignored.
-            - Note: This can throw a psycopg.Database Error if passed an update to Symbol, Source,
-            or Exchange that would result in a change that would violate the UNIQUE flag on those
-            collective parameters.
-
-        :returns: Boolean, True on Successful Update.
-        """
-        # Convert varierty of symbol inputs to consistent list of integer pkeys
-        if isinstance(symbols, int):
-            pkeys = [symbols]
-        elif isinstance(symbols, str):
-            pkeys = [self._get_pkey(symbols)]
-            if pkeys[0] is None:
-                log.warning("Cannot Update Symbol %s, symbol is not known.", symbols)
-                return False
-        else:
-            _tmp_list = [(self._get_pkey(symbol), symbol) for symbol in symbols]
-            pkeys = [_tmp_list for pkey, _ in _tmp_list if pkey is not None]
-            unknown_symbols = [symbol for pkey, symbol in _tmp_list if pkey is None]
-            log.warning(
-                "Cannot Update Symbol(s) %s, symbol is not known.", unknown_symbols
-            )
-
-        if "pkey" in args:
-            args.pop("pkey")
-
-        _args = [(k, v) for k, v in args.items() if k in SYMBOL_ARGS]
-        if len(_args) == 0:
-            log.warning(
-                "Attemping to update Database symbol but no arg updates where given. pkey(s) = %s",
-                pkeys,
-            )
-            return False
-
-        if len(pkeys) == 0:
-            log.warning(
-                "Attemping to update Database symbol(s) but no pkeys were given"
-            )
-            return False
-
-        # Convert The pkeys to a List so only one Update Command needs to be sent.
-        _filter = sql.SQL("pkey=ANY(ARRAY[{pkeys}])").format(
-            pkeys=sql.SQL(",").join(sql.Literal(v) for v in pkeys)
-        )
-
-        with self._cursor() as cursor:
-            cursor.execute(self[Op.UPDATE, AssetTbls.SYMBOLS](_args, _filter))
-            return (
-                cursor.statusmessage is not None and cursor.statusmessage == "UPDATE 1"
-            )
-
-        return False  # Default return if cursor throws error
-
-    def stored_symbol_metadata(
-        self,
-        symbol: int | str,
-        filters: dict[MetadataArgs | str, Any] = {},
-    ) -> list[MetadataInfo]:
-        """
-        Return MetaData about the series information stored for a given symbol, by primary key.
-        Only Returns information about what has been stored & aggregated, not everything that should
-        be stored & aggregated
-
-        --PARAMS--
-        - pkey : integer
-            - Primary Key of the desired Symbol. Value is returned as a value in the search_symbols
-            return object.
-        - filters : Dict[MetadataArgs, Any]
-            - Filtering Arguments for the returned MetaData. Extra Keys that don't map to columns
-            of the table are ignored. Optional Arguments are as follows.
-            - table_name : str
-            - schema_name : str
-            - is_raw_data : boolean
-            - Timeframe : int (Number of seconds elapsed in the period)
-            - trading_hours_type : Literal['ext', 'rth', 'eth', 'none']
-        """
-
-        pkey = self._get_pkey(symbol)
-        if pkey is None:
-            log.info("Cannot get Metadata, Unknown Symbol: %s", symbol)
-            return []
-
-        _filters = [("pkey", "=", pkey)]  # Ensure a Pkey filter is Passed
-        _filters.extend(
-            [(k, "=", v) for k, v in filters.items() if k in (METADATA_ARGS - {"pkey"})]
-        )
-
-        with self._cursor(dict_cursor=True) as cursor:
-            cursor.execute(self[Op.SELECT, AssetTbls._METADATA](_filters))
-            return [MetadataInfo(**row) for row in cursor.fetchall()]
-
-    def get_hist(
-        self,
-        symbol: int | str,
-        timeframe: Timedelta,
-        start: Optional[Timestamp] = None,
-        end: Optional[Timestamp] = None,
-        limit: Optional[int] = None,
-        rth: bool = False,
-        rtn_args: Optional[Iterable[AggregateArgs | TickArgs | str]] = None,
-        *,
-        schema: Optional[str | StrEnum] = None,
-        asset_class: Optional[str] = None,
-    ) -> Optional[DataFrame]:
-        """
-        Fetch Historical Data from the Database Aggregating the desired data as needed.
-
-        -- PARAMS --
-        - symbol : Int | Str
-            - Symbol (str) or Primary Key (int) of the Symbol to Fetch (Case is ignored)
-        - timeframe : pandas.Timedelta
-            - Interval of the Data to Return. Doesn't not need to be a value stored in the
-            database, merely one that can be derived from stored data.
-            - Timedelta(0) will return Tick Data if it is stored for the given pkey
-        - start : Optional pandas.Timestamp : Earliest Date of Data to Retrieve
-        - end : Optional pandas.Timestamp : Latest Date of Data to Retrieve
-        - limit : Optional Int : Maximum number of data points to return
-        - rth : bool
-            - When True, Return RTH Hours only
-            - When False, Return All stored data, RTH/ETH/Closed/Breaks, etc
-        - rtn_args : Optional list of arguments to return.
-            - Default = {"dt", "open", "high", "low", "close", "volume", "price"}
-            - Unknown args are ignored
-            - Note: 'dt' will always be returned even if not included.
-
-        - schema : Optional str | strEnum
-            - Data Schema to fetch the data from.
-        - asset_class : Optional str
-            - Asset_class of the symbol requested
-                - Note: Both asset_class & schema will be determined from the pkey/symbol if
-                necessary. However, if both are already known and given as args that information
-                will be used in place of querying the database for it.
-        """
-
-        # Search Metadata for available data at TF or lower
-        with self._cursor(dict_cursor=True) as cursor:
-
-            # region -- Fetch Asset Class & Schema & Pkey if necessary --
-            if asset_class is None or schema is None or isinstance(symbol, str):
-                if isinstance(symbol, str):
-                    _filters = [("symbol", "ILIKE", symbol)]
-                else:
-                    _filters = [("pkey", "=", symbol)]
-                cursor.execute(
-                    self[Op.SELECT, GenericTbls.TABLE](
-                        Schema.SECURITY,
-                        AssetTbls.SYMBOLS,
-                        [
-                            "pkey",
-                            "asset_class",
-                            "store_tick",
-                            "store_minute",
-                            "store_aggregate",
-                        ],
-                        _filters,
-                        limit,
-                    )
-                )
-                rsp = cursor.fetchall()
-                if len(rsp) == 0:
-                    log.warning("Unknown key : %s", symbol)
-                    return
-                rsp = rsp[0]
-
-                if rsp["store_minute"]:
-                    schema = Schema.MINUTE_DATA
-                elif rsp["store_aggregate"]:
-                    schema = Schema.AGGREGATE_DATA
-                elif rsp["store_tick"]:
-                    schema = Schema.TICK_DATA
-                else:
-                    schema = None
-
-                if schema is None:
-                    log.warning("symbol = %s is known, but not Stored", symbol)
-                    return
-
-                pkey = rsp["pkey"]
-                asset_class = rsp["asset_class"]
-                assert asset_class
-            else:
-                # Given schema, asset_class & integer pkey
-                pkey = symbol
-            # endregion
-
-            desired_table = AssetTable(asset_class, timeframe, False, False, rth)
-            try:
-                src_table, need_to_calc = self.table_config[
-                    Schema(schema)
-                ].get_selection_source_table(desired_table)
-            except AttributeError:
-                log.warning(
-                    "Cannot Aggregate timeframe %s for symbol %s from the data in the database",
-                    timeframe,
-                    symbol,
-                )
-                return None
-
-            # Configure return args as a set
-            if rtn_args is None:
-                _rtns = {"dt", "open", "high", "low", "close", "volume", "price"}
-            else:
-                # sql formatting functions remove excess/ unkown args
-                _rtns = {*rtn_args}
-
-            if need_to_calc:
-                log.info(
-                    "Calculating Aggregate at Timeframe : %s, from %s Timeframe",
-                    timeframe,
-                    src_table.period,
-                )
-                cmd = self[Op.SELECT, SeriesTbls.CALCULATE_AGGREGATE](
-                    schema, src_table, timeframe, pkey, rth, start, end, limit, _rtns
-                )
-            else:
-                # Works for both Aggregates and Raw Tick Data Retrieval
-                cmd = self[Op.SELECT, SeriesTbls.RAW_AGGREGATE](
-                    schema, src_table, pkey, rth, start, end, limit, _rtns
-                )
-
-            cursor.execute(cmd)
-            rsp = cursor.fetchall()
-            if len(rsp) == 0:
-                return None
-            else:
-                _rtn = DataFrame(rsp[0])
-                # tz_convert to use an expected tz of 'UTC' over 'etc/utc'
-                _rtn["dt"] = _rtn["dt"].dt.tz_convert("UTC")
-                return _rtn
 
     # endregion

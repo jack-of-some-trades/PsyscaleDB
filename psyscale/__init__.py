@@ -5,10 +5,24 @@ in a TimescaleDB optimized Postgres Database.
 
 import logging
 from typing import Literal
-from .client import PsyscaleDB, PsyscaleConnectParams
 
-# Not Importing .manager to preserve lazy loading
-# from .manager import PsyscaleMod
+from .core import PsyscaleConnectParams
+from .symbols_partial import SymbolsPartial
+from .metadata_partial import MetadataPartial
+from .series_data_partial import SeriesDataPartial
+from .timeseries_config_partial import ConfigureTimeseriesPartial
+
+
+class PsyscaleDB(
+    ConfigureTimeseriesPartial, MetadataPartial, SeriesDataPartial, SymbolsPartial
+):
+    """
+    Synchronous client interface for connecting to a PostgreSQL + TimescaleDB Database.
+
+    Timescale DB Docker self-host instructions
+    https://docs.timescale.com/self-hosted/latest/install/installation-docker/
+    """
+
 
 __all__ = (
     "PsyscaleDB",
