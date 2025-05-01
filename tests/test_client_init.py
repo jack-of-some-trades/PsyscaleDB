@@ -5,8 +5,9 @@ from psycopg.rows import tuple_row
 from testcontainers.postgres import PostgresContainer
 
 from psycopg import sql
+from psyscale.async_core import ImproperInitilizationError
 from psyscale.dev import *
-from psyscale import PsyscaleConnectParams, PsyscaleDB
+from psyscale import PsyscaleAsync, PsyscaleConnectParams, PsyscaleDB
 from psyscale.psql.enum import GenericTbls, Schema
 from psyscale.psql.generic import list_schemas
 
@@ -128,3 +129,15 @@ def test_05_security_schema_generation(db: PsyscaleDB):
 
     assert rsp[0][0] is True
     assert str(status).startswith("SELECT")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+async def test_06_async_init(test_url):
+    # with pytest.raises(ImproperInitilizationError):
+    #     PsyscaleAsync(test_url)
+
+    # No Error Raised
+    _db = PsyscaleAsync(test_url)
+    assert await _db._async_health_check()
+    await _db.close()

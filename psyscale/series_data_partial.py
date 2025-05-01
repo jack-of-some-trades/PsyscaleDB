@@ -6,6 +6,7 @@ from typing import Iterable, Literal, Optional
 
 from pandas import DataFrame, Timedelta, Timestamp
 
+from psyscale.async_core import PsyscaleAsyncCore
 from psyscale.psql.timeseries import AGGREGATE_ARGS, TICK_ARGS, AggregateArgs, TickArgs
 
 from .series_df import Series_DF
@@ -337,6 +338,264 @@ class SeriesDataPartial(PsyscaleCore):
             )
             self._altered_tables[metadata.schema_name].add(table.table_name)
             self._altered_tables_mdata[metadata.schema_name][table.table_name] = mdata
+
+
+class AsyncSeriesDataPartial(PsyscaleAsyncCore, SeriesDataPartial):
+    "Async extension for Series Data Upsert and Fetch Functions"
+
+    async def upsert_series_async(
+        self,
+        pkey: int,
+        metadata: MetadataInfo,
+        data: DataFrame,
+        exchange: Optional[str] = None,
+        *,
+        on_conflict: Literal["update", "error", "ignore"] = "ignore",
+    ):
+        "See upsert_series() Docstring"
+        table = (
+            metadata.table
+            if metadata.table is not None
+            else AssetTable.from_table_name(metadata.table_name)
+        )
+
+        data = _configure_and_check_df(data, exchange, table)
+
+        if on_conflict == "ignore":
+            data = _filter_redundant_datapoints(data, metadata)
+            if len(data) == 0:
+                log.warning(
+                    "Upsert_Symbol_Data() given only redundant data points and set to ignore.\n"
+                    'No Data is being inserted. Set on_conflict="update" to edit existing data.'
+                )
+                return
+
+        buffer_tbl_type = (
+            SeriesTbls.TICK_BUFFER
+            if table.period == Timedelta(0)
+            else SeriesTbls.RAW_AGG_BUFFER
+        )
+
+        # Inject the data through a temporary table
+        with self._cursor(raise_err=True) as cursor:
+            # Create & Inject the Data into a Temporary Table
+            cursor.execute(self[Op.CREATE, buffer_tbl_type](table))
+            copy_cmd = self[Op.COPY, buffer_tbl_type](
+                # Sends the COPY Cmd & the order of the Columns of the Dataframe
+                [str(c) for c in data.columns]
+            )
+            with cursor.copy(copy_cmd) as copy:
+                for row in data.itertuples(index=False, name=None):
+                    # Writes each row as a Tuple that matches the Dataframe Column Order
+                    copy.write_row(row)
+
+            # Merge the Temp Table By inserting / upserting from the Temporary Table
+            _op = Op.UPSERT if on_conflict == "update" else Op.INSERT
+            cursor.execute(
+                self[_op, buffer_tbl_type](metadata.schema_name, table, pkey)
+            )
+            log.info("Symbol Data Upsert Status Message: %s", cursor.statusmessage)
+
+        self._update_series_data_edit_record(metadata, data, table)
+
+    async def get_series_async(
+        self,
+        symbol: int | str,
+        timeframe: Timedelta,
+        start: Optional[Timestamp] = None,
+        end: Optional[Timestamp] = None,
+        limit: Optional[int] = None,
+        rth: bool = False,
+        rtn_args: Optional[Iterable[AggregateArgs | TickArgs | str]] = None,
+        *,
+        schema: Optional[str | StrEnum] = None,
+        asset_class: Optional[str] = None,
+    ) -> Optional[DataFrame]:
+        """
+        Fetch Series Data from the Database Aggregating the desired data as needed.
+
+        -- PARAMS --
+        - symbol : Int | Str
+            - Symbol (str) or Primary Key (int) of the Symbol to Fetch (Case is ignored)
+        - timeframe : pandas.Timedelta
+            - Interval of the Data to Return. Doesn't not need to be a value stored in the
+            database, merely one that can be derived from stored data.
+            - Timedelta(0) will return Tick Data if it is stored for the given pkey
+        - start : Optional pandas.Timestamp : Earliest Date of Data to Retrieve
+        - end : Optional pandas.Timestamp : Latest Date of Data to Retrieve
+        - limit : Optional Int : Maximum number of data points to return
+        - rth : bool
+            - When True, Return RTH Hours only
+            - When False, Return All stored data, RTH/ETH/Closed/Breaks, etc
+        - rtn_args : Optional list of arguments to return.
+            - Default = {"dt", "open", "high", "low", "close", "volume", "price"}
+            - Unknown args are ignored
+            - Note: 'dt' will always be returned even if not included.
+
+        - schema : Optional str | strEnum
+            - Data Schema to fetch the data from.
+        - asset_class : Optional str
+            - Asset_class of the symbol requested
+                - Note: Both asset_class & schema will be determined from the pkey/symbol if
+                necessary. However, if both are already known and given as args that information
+                will be used in place of querying the database for it.
+        """
+
+        # Search Metadata for available data at TF or lower
+        async with self._acursor(dict_cursor=True) as cursor:
+
+            # region -- Fetch Asset Class & Schema & Pkey if necessary --
+            if asset_class is None or schema is None or isinstance(symbol, str):
+                if isinstance(symbol, str):
+                    _filters = [("symbol", "ILIKE", symbol)]
+                else:
+                    _filters = [("pkey", "=", symbol)]
+                await cursor.execute(
+                    self[Op.SELECT, GenericTbls.TABLE](
+                        Schema.SECURITY,
+                        AssetTbls.SYMBOLS,
+                        [
+                            "pkey",
+                            "asset_class",
+                            "store_tick",
+                            "store_minute",
+                            "store_aggregate",
+                        ],
+                        _filters,
+                        limit,
+                    )
+                )
+                rsp = await cursor.fetchall()
+                if len(rsp) == 0:
+                    log.warning("Unknown key : %s", symbol)
+                    return
+                rsp = rsp[0]
+
+                if rsp["store_minute"]:
+                    schema = Schema.MINUTE_DATA
+                elif rsp["store_aggregate"]:
+                    schema = Schema.AGGREGATE_DATA
+                elif rsp["store_tick"]:
+                    schema = Schema.TICK_DATA
+                else:
+                    log.warning("Symbol : %s is known, but not stored", symbol)
+                    return
+
+                pkey = rsp["pkey"]
+                asset_class = rsp["asset_class"]
+                assert asset_class
+            else:
+                # Given schema, asset_class & integer pkey
+                pkey = symbol
+            # endregion
+
+            desired_table = AssetTable(asset_class, timeframe, False, False, rth)
+            try:
+                src_table, need_to_calc = self._table_config[
+                    Schema(schema)
+                ].get_selection_source_table(desired_table)
+            except AttributeError:
+                log.warning(
+                    "Cannot Aggregate timeframe %s for symbol %s from the data in the database",
+                    timeframe,
+                    symbol,
+                )
+                return None
+
+            # Configure return args as a set
+            if rtn_args is None:
+                _rtns = {"dt", "open", "high", "low", "close", "volume", "price"}
+            else:
+                # sql formatting functions remove excess/ unkown args
+                _rtns = {*rtn_args}
+
+            if need_to_calc:
+                log.info(
+                    "Calculating Aggregate at Timeframe : %s, from %s Timeframe",
+                    timeframe,
+                    src_table.period,
+                )
+                cmd = self[Op.SELECT, SeriesTbls.CALCULATE_AGGREGATE](
+                    schema, src_table, timeframe, pkey, rth, start, end, limit, _rtns
+                )
+            else:
+                # Works for both Aggregates and Raw Tick Data Retrieval
+                cmd = self[Op.SELECT, SeriesTbls.RAW_AGGREGATE](
+                    schema, src_table, pkey, rth, start, end, limit, _rtns
+                )
+
+            await cursor.execute(cmd)
+            rsp = await cursor.fetchall()
+            if len(rsp) == 0:
+                return None
+            else:
+                _rtn = DataFrame(rsp[0])
+                # tz_convert to use an expected tz of 'UTC' over 'etc/utc'
+                _rtn["dt"] = _rtn["dt"].dt.tz_convert("UTC")
+                return _rtn
+
+    async def refresh_aggregate_metadata_async(self):
+        """
+        Refresh Continuous Aggregates & the Timeseries Metadata Table based on upserts made.
+        Designed to be called after all known data insertions have been made.
+
+        Edits made using 'upsert_symbol_data()' are tracked. This includes individual tables and the
+        respective time-ranges edited. This method uses that stored information to update only what
+        needs to be updated.
+
+        CAVEAT: This only works so long as this is the same class instance that made the updates
+        in the first place. If that instance is deleted before calling this function
+        refresh_all_aggregates_and_metadata() must be invoked manually.
+        """
+        if not hasattr(self, "_altered_tables"):
+            log.info("No Series Data has been inserted, Skipping Metadata Refresh.")
+            return
+
+        async with self._acursor(auto_commit=True) as cursor:
+
+            # Loop Through Schemas
+            for schema, mdata_dict in self._altered_tables_mdata.items():
+                log.info(
+                    " ---- ---- Refreshing Timeseries Schema : %s  ---- ---- ", schema
+                )
+
+                # Loop Through Edited Tables
+                for table_name, mdata in mdata_dict.items():
+                    log.info(
+                        " --- Refreshing Aggregates Associated with Table : %s ---- ",
+                        table_name,
+                    )
+                    assert mdata.table  # Ensuring mata.Table is defined by post_init
+                    cont_aggs = self._table_config[
+                        Schema(schema)
+                    ].get_tables_to_refresh(mdata.table)
+                    # Add some buffer dates so entire time chucks are covered
+                    # Times Chucks will not refresh unless they are completely included
+                    mdata.start_date -= Timedelta("4W")
+                    mdata.end_date += Timedelta("4W")
+
+                    for table in cont_aggs:
+                        if table.raw:
+                            continue
+
+                        log.info(
+                            "Refreshing Continuous Aggregate : %s ", table.table_name
+                        )
+                        await cursor.execute(
+                            self[Op.REFRESH, SeriesTbls.CONTINUOUS_AGG](
+                                schema, table, mdata.start_date, mdata.end_date
+                            )
+                        )
+
+            # Refresh the metadata View to Reflect Updates
+            log.info(
+                "---- ---- Refreshing 'Security._Metadata' Materialized View ---- ----"
+            )
+            await cursor.execute(self[Op.REFRESH, AssetTbls._METADATA]())
+
+        # Reset the mdata memory just in case
+        del self._altered_tables
+        del self._altered_tables_mdata
 
 
 def _configure_and_check_df(

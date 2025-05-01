@@ -219,7 +219,7 @@ class PsyscaleCore:
             raise e  # Give some more informative info here?
 
         self.cmds = Commands()
-        self.conn_params = conn_params
+        self.db_cfg = conn_params
         self._ensure_std_schemas_exist()
         self._read_db_timeseries_config()
 
@@ -228,7 +228,7 @@ class PsyscaleCore:
         return self.cmds[args]
 
     def __del__(self):
-        if self.down_on_del and self.conn_params.is_local:
+        if self.down_on_del and self.db_cfg.is_local:
             subprocess.run(
                 ["docker-compose", "-f", self.yml_path, "down"],
                 capture_output=False,

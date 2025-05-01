@@ -9,6 +9,7 @@ from typing import (
 )
 from pandas import DataFrame, Series
 from psycopg import sql
+from psyscale.async_core import PsyscaleAsyncCore
 from psyscale.core import PsyscaleConnectParams, PsyscaleCore
 
 from .psql import (
@@ -101,33 +102,9 @@ class SymbolsPartial(PsyscaleCore):
             First Series Object is inserted Symbols
             Second Series Object is Updated Symbols
         """
-        if not isinstance(source, str) or source == "":
-            log.error("Cannot Insert Symbols, Invalid Source, Source = %s", source)
+        symbols_fmt = _prep_symbols_upsert(symbols, source)
+        if symbols_fmt is None:
             return Series(), Series()
-        if not isinstance(symbols, DataFrame):
-            log.error("Cannot Insert Symbols, Invalid Symbols Argument")
-            return Series(), Series()
-
-        symbols.columns = symbols.columns.str.lower()
-        req_cols = {"symbol", "name", "exchange", "asset_class"}
-        missing_cols = req_cols.difference(symbols.columns)
-        if len(missing_cols) != 0:
-            log.error(
-                "Cannot insert symbols. Dataframe missing Columns: %s", missing_cols
-            )
-            return Series(), Series()
-
-        # Convert to a format that can be inserted into the database
-        symbols_fmt = symbols[[*req_cols]].copy()
-
-        # Turn all extra Columns into an attributes json obj.
-        symbols_fmt.loc[:, "attrs"] = symbols[
-            [*set(symbols.columns).difference(req_cols)]
-        ].apply(lambda x: x.to_json(), axis="columns")
-
-        # Insert Args a Dictionary of numpy arrays and a contant source.
-        # This dictionary is passed as arguments to Postgres that are then unnested.
-        response = DataFrame()
 
         with self._cursor() as cursor:
             # Create & Inject the Data into a Temporary Table
@@ -144,19 +121,9 @@ class SymbolsPartial(PsyscaleCore):
             # Merge the Temp Table By inserting / upserting from the Temporary Table
             _op = Op.UPSERT if on_conflict == "update" else Op.INSERT
             cursor.execute(self[_op, AssetTbls.SYMBOLS_BUFFER](source))
-
             response = DataFrame(cursor.fetchall())
 
-        if len(response) == 0:
-            return Series(), Series()
-
-        if _op == Op.INSERT:
-            # All Returned symbols in response were inserted, none updated.
-            return response[0], Series()
-        else:
-            # Second Column is xmax, on insertion this is 0, on update its != 0
-            inserted = response[1] == "0"
-            return response.loc[inserted, 0], response.loc[~inserted, 0]
+        return _pkg_symbols_upsert_response(response, _op)
 
     def search_symbols(
         self,
@@ -213,36 +180,9 @@ class SymbolsPartial(PsyscaleCore):
             will return all symbols starting with 'SP', case insensitive.
         """
 
-        if "pkey" in filter_args:
-            # Fast Track PKEY Searches since there will only ever be 1 symbol returned
-            filters = [("pkey", "=", filter_args["pkey"])]
-            name, symbol, attrs, limit = None, None, None, 1
-        else:
-            filters = [
-                (k, "=", v) for k, v in filter_args.items() if k in STRICT_SYMBOL_ARGS
-            ]
-
-            name = filter_args.get("name", None)
-            symbol = filter_args.get("symbol", None)
-
-            if strict_symbol_search and symbol is not None:
-                # Determine if symbol is passed as a strict or fuzzy parameter
-                compare_method = (
-                    strict_symbol_search
-                    if isinstance(strict_symbol_search, str)
-                    else "ILIKE"  # Default search for similar symbols that match ignoring case.
-                )
-                filters.append(("symbol", compare_method, symbol))
-                symbol = None  # Prevents the 'similarity' search from being added
-
-            # Filter all extra given filter params into a separate dict
-            attrs = (
-                dict((k, v) for k, v in filter_args.items() if k not in SYMBOL_ARGS)
-                if attrs_search
-                else None
-            )
-            if attrs and len(attrs) == 0:
-                attrs = None
+        name, symbol, limit, filters, attrs = _prep_symbol_search(
+            filter_args, attrs_search, limit, strict_symbol_search
+        )
 
         with self._cursor(dict_cursor=True) as cursor:
             cursor.execute(
@@ -327,3 +267,170 @@ class SymbolsPartial(PsyscaleCore):
             )
 
         return False  # Default return if cursor throws error
+
+
+class AsyncSymbolsPartial(PsyscaleAsyncCore, SymbolsPartial):
+    "Async Symbols Table search function"
+
+    async def upsert_securities_async(
+        self,
+        symbols: DataFrame,
+        source: str,
+        *,
+        on_conflict: Literal["update", "ignore"] = "update",
+    ) -> Tuple[Series, Series]:
+        """
+        Insert the Dataframe of symbols into the database.
+        Primary Each for each entry is (Ticker, Exchange, Source)
+
+        -- PARAMS --
+
+        symbols: Dataframe.
+            - Required Columns {ticker:str, name:str, exchange:str}:
+                -- symbol:str - Ticker Symbol abbreviation
+                -- name:Str - Full String Name of the Symbol
+                -- exchange:str - Abbrv. Exchange Name for the symbol
+                -- asset_class:str - Type of asset, This must match the Timeseries Config
+                    asset_classes otherwise data for this symbol cannot be inserted into the
+                    database.
+
+            - Any Extra Columns will be packaged into JSON and dumped into an 'attrs' Dictionary.
+            To prevent bloat, drop all columns that will not be used.
+
+        source: string.
+            - string representation of what API Sourced the symbol
+            - e.g. Alpaca, IBKR, Polygon, Coinbase, etc.
+
+        on_conflict: Literal["update", "ignore"] : default = "update"
+            Update or Do Nothing when given a symbol that has a conflicting primary key.
+
+        -- RETURNS --
+            Tuple of [Series, Series]
+            First Series Object is inserted Symbols
+            Second Series Object is Updated Symbols
+        """
+        symbols_fmt = _prep_symbols_upsert(symbols, source)
+        if symbols_fmt is None:
+            return Series(), Series()
+
+        async with self._acursor() as cursor:
+            # Create & Inject the Data into a Temporary Table
+            await cursor.execute(self[Op.CREATE, AssetTbls.SYMBOLS_BUFFER]())
+            copy_cmd = self[Op.COPY, AssetTbls.SYMBOLS_BUFFER](
+                # Sends the COPY Cmd & the order of the Columns of the Dataframe
+                [str(c) for c in symbols_fmt.columns]
+            )
+            async with cursor.copy(copy_cmd) as copy:
+                for row in symbols_fmt.itertuples(index=False, name=None):
+                    # Writes each row as a Tuple that matches the Dataframe Column Order
+                    await copy.write_row(row)
+
+            # Merge the Temp Table By inserting / upserting from the Temporary Table
+            _op = Op.UPSERT if on_conflict == "update" else Op.INSERT
+            await cursor.execute(self[_op, AssetTbls.SYMBOLS_BUFFER](source))
+            response = DataFrame(await cursor.fetchall())
+
+        return _pkg_symbols_upsert_response(response, _op)
+
+    async def search_symbols_async(
+        self,
+        filter_args: dict[SymbolArgs | str, Any],
+        return_attrs: bool = False,
+        attrs_search: bool = False,
+        limit: int | None = 100,
+        *,
+        strict_symbol_search: bool | Literal["ILIKE", "LIKE", "="] = False,
+    ) -> list[dict]:
+        "See symbol_search method docstring"
+        name, symbol, limit, filters, attrs = _prep_symbol_search(
+            filter_args, attrs_search, limit, strict_symbol_search
+        )
+
+        async with self._acursor(dict_cursor=True) as cursor:
+            await cursor.execute(
+                self[Op.SELECT, AssetTbls.SYMBOLS](
+                    name, symbol, filters, return_attrs, attrs, limit
+                )
+            )
+            return await cursor.fetchall()
+
+
+def _prep_symbol_search(
+    filter_args: dict[SymbolArgs | str, Any],
+    attrs_search: bool,
+    limit: int | None,
+    strict_symbol_search: bool | Literal["ILIKE", "LIKE", "="],
+) -> tuple:
+
+    if "pkey" in filter_args:
+        # Fast Track PKEY Searches since there will only ever be 1 symbol returned
+        filters = [("pkey", "=", filter_args["pkey"])]
+        name, symbol, attrs, limit = None, None, None, 1
+    else:
+        filters = [
+            (k, "=", v) for k, v in filter_args.items() if k in STRICT_SYMBOL_ARGS
+        ]
+
+        name = filter_args.get("name", None)
+        symbol = filter_args.get("symbol", None)
+
+        if strict_symbol_search and symbol is not None:
+            # Determine if symbol is passed as a strict or fuzzy parameter
+            compare_method = (
+                strict_symbol_search
+                if isinstance(strict_symbol_search, str)
+                else "ILIKE"  # Default search for similar symbols that match ignoring case.
+            )
+            filters.append(("symbol", compare_method, symbol))
+            symbol = None  # Prevents the 'similarity' search from being added
+
+        # Filter all extra given filter params into a separate dict
+        attrs = (
+            dict((k, v) for k, v in filter_args.items() if k not in SYMBOL_ARGS)
+            if attrs_search
+            else None
+        )
+        if attrs and len(attrs) == 0:
+            attrs = None
+
+    return name, symbol, limit, filters, attrs
+
+
+def _prep_symbols_upsert(symbols: DataFrame, source: str) -> DataFrame | None:
+
+    if not isinstance(source, str) or source == "":
+        log.error("Cannot Insert Symbols, Invalid Source, Source = %s", source)
+        return
+    if not isinstance(symbols, DataFrame):
+        log.error("Cannot Insert Symbols, Invalid Symbols Argument")
+        return
+
+    symbols.columns = symbols.columns.str.lower()
+    req_cols = {"symbol", "name", "exchange", "asset_class"}
+    missing_cols = req_cols.difference(symbols.columns)
+    if len(missing_cols) != 0:
+        log.error("Cannot insert symbols. Dataframe missing Columns: %s", missing_cols)
+        return
+
+    # Convert to a format that can be inserted into the database
+    symbols_fmt = symbols[[*req_cols]].copy()
+
+    # Turn all extra Columns into an attributes json obj.
+    symbols_fmt.loc[:, "attrs"] = symbols[
+        [*set(symbols.columns).difference(req_cols)]
+    ].apply(lambda x: x.to_json(), axis="columns")
+
+    return symbols_fmt
+
+
+def _pkg_symbols_upsert_response(response: DataFrame, _op: Op) -> Tuple[Series, Series]:
+    if len(response) == 0:
+        return Series(), Series()
+
+    if _op == Op.INSERT:
+        # All Returned symbols in response were inserted, none updated.
+        return response[0], Series()
+    else:
+        # Second Column is xmax, on insertion this is 0, on update its != 0
+        inserted = response[1] == "0"
+        return response.loc[inserted, 0], response.loc[~inserted, 0]

@@ -24,7 +24,11 @@ log = logging.getLogger("psyscale_log")
 
 
 class MetadataPartial(PsyscaleCore):
-    "Series Metadata related sub-routines"
+    """
+    Series Metadata related sub-routines. Relevant Table initialization handled by
+    SymbolsPartial._ensure_securities_schema_format() to ensure symbols table is
+    created first.
+    """
 
     def symbol_metadata(
         self,
@@ -63,7 +67,7 @@ class MetadataPartial(PsyscaleCore):
             return []
 
         if _all:
-            return _fetch_all_stored_metadata(self, pkey)
+            return _fetch_all_metadata(self, pkey)
         else:
             return _fetch_stored_metadata(self, pkey, filters)
 
@@ -165,7 +169,7 @@ def _fetch_stored_metadata(
     return [MetadataInfo(**row) for row in rsp]
 
 
-def _fetch_all_stored_metadata(db: MetadataPartial, pkey: int) -> list[MetadataInfo]:
+def _fetch_all_metadata(db: MetadataPartial, pkey: int) -> list[MetadataInfo]:
     """
     Fetch MetadataInfo for what is stored *and* what should be stored fpr a given symbol pkey.
 

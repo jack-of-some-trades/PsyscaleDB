@@ -1,7 +1,8 @@
 import pytest
+import pytest_asyncio
 from testcontainers.postgres import PostgresContainer
 
-from psyscale import PsyscaleDB
+from psyscale import PsyscaleAsync, PsyscaleDB
 from psyscale.core import TIMESCALE_IMAGE, PsyscaleConnectParams
 
 # ---- ---- Module Level Test Container ---- ----
@@ -24,3 +25,11 @@ def test_url(test_container):
 def psyscale_db(test_url):
     "PsyscaleDB Instance that can be reused for the entire session"
     yield PsyscaleDB(PsyscaleConnectParams.from_url(test_url))
+
+
+@pytest_asyncio.fixture(scope="function")
+async def psyscale_async(test_url):
+    "PsyscaleDB Instance that can be reused for the entire session"
+    db = PsyscaleAsync(PsyscaleConnectParams.from_url(test_url))
+    yield db
+    await db.close()
