@@ -4,7 +4,6 @@ import pandas as pd
 from pandas.testing import assert_series_equal
 
 import pytest
-import pytest_asyncio
 
 from psyscale import PsyscaleAsync
 from psyscale.dev import TimeseriesConfig
@@ -183,7 +182,10 @@ async def test_03_check_inserted_data(psyscale_async: PsyscaleAsync):
     assert inserted_data is not None
 
     for col in raw_data.columns:
-        assert_series_equal(raw_data.df[col], inserted_data[col])
+        if col == "volume":
+            assert_series_equal(raw_data.df[col].astype("int64"), inserted_data[col])
+        else:
+            assert_series_equal(raw_data.df[col], inserted_data[col])
 
     # check that only the 'rth' data cna be retrieved
     raw_data.df = raw_data.df[raw_data.df["rth"] == 0]
@@ -198,4 +200,7 @@ async def test_03_check_inserted_data(psyscale_async: PsyscaleAsync):
     assert inserted_data is not None
 
     for col in raw_data.columns:
-        assert_series_equal(raw_data.df[col], inserted_data[col])
+        if col == "volume":
+            assert_series_equal(raw_data.df[col].astype("int64"), inserted_data[col])
+        else:
+            assert_series_equal(raw_data.df[col], inserted_data[col])

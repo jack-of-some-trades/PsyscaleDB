@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from io import BytesIO
 from itertools import chain
 import logging
 import os
@@ -23,7 +24,7 @@ from typing import (
     overload,
 )
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
-from pandas import Timestamp
+from pandas import DataFrame, Timestamp
 
 import psycopg as pg
 import psycopg.rows as pg_rows
@@ -249,6 +250,7 @@ class PsyscaleCore:
         self,
         dict_cursor: Literal[True],
         *,
+        binary: bool = False,
         pipeline: bool = False,
         raise_err: bool = False,
         auto_commit: bool = False,
@@ -259,6 +261,7 @@ class PsyscaleCore:
         self,
         dict_cursor: Literal[False] = False,
         *,
+        binary: bool = False,
         pipeline: bool = False,
         raise_err: bool = False,
         auto_commit: bool = False,
@@ -269,6 +272,7 @@ class PsyscaleCore:
         self,
         dict_cursor: bool = False,
         *,
+        binary: bool = False,
         pipeline: bool = False,
         raise_err: bool = False,
         auto_commit: bool = False,
@@ -296,6 +300,7 @@ class PsyscaleCore:
         self,
         dict_cursor: bool = False,
         *,
+        binary: bool = False,
         pipeline: bool = False,
         raise_err: bool = False,
         auto_commit: bool = False,
@@ -324,10 +329,16 @@ class PsyscaleCore:
 
         try:
             if pipeline:
-                with conn.pipeline(), conn.cursor(row_factory=cursor_factory) as cursor:
+                with (
+                    conn.pipeline(),
+                    conn.cursor(row_factory=cursor_factory, binary=binary) as cursor,
+                ):
                     yield cursor  # type:ignore : Silence the Dict/Tuple overloading Error
             else:
-                with conn, conn.cursor(row_factory=cursor_factory) as cursor:
+                with (
+                    conn,
+                    conn.cursor(row_factory=cursor_factory, binary=binary) as cursor,
+                ):
                     yield cursor  # type:ignore : Silence the Dict/Tuple overloading Error
         except pg.DatabaseError as e:
             conn.rollback()  # Reset Database, InFailedSqlTransaction Err thrown if not reset

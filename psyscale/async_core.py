@@ -106,6 +106,7 @@ class PsyscaleAsyncCore(PsyscaleCore):
         self,
         dict_cursor: Literal[True],
         *,
+        binary: bool = False,
         pipeline: bool = False,
         raise_err: bool = False,
         auto_commit: bool = False,
@@ -115,6 +116,7 @@ class PsyscaleAsyncCore(PsyscaleCore):
         self,
         dict_cursor: Literal[False] = False,
         *,
+        binary: bool = False,
         pipeline: bool = False,
         raise_err: bool = False,
         auto_commit: bool = False,
@@ -124,6 +126,7 @@ class PsyscaleAsyncCore(PsyscaleCore):
         self,
         dict_cursor: bool = False,
         *,
+        binary: bool = False,
         pipeline: bool = False,
         raise_err: bool = False,
         auto_commit: bool = False,
@@ -151,6 +154,7 @@ class PsyscaleAsyncCore(PsyscaleCore):
         self,
         dict_cursor: bool = False,
         *,
+        binary: bool = False,
         pipeline: bool = False,
         raise_err: bool = False,
         auto_commit: bool = False,
@@ -181,11 +185,14 @@ class PsyscaleAsyncCore(PsyscaleCore):
             if pipeline:
                 async with (
                     conn.pipeline(),
-                    conn.cursor(row_factory=cursor_factory) as cursor,
+                    conn.cursor(row_factory=cursor_factory, binary=binary) as cursor,
                 ):
                     yield cursor  # type:ignore : Silence the Dict/Tuple overloading Error
             else:
-                async with conn, conn.cursor(row_factory=cursor_factory) as cursor:
+                async with (
+                    conn,
+                    conn.cursor(row_factory=cursor_factory, binary=binary) as cursor,
+                ):
                     yield cursor  # type:ignore : Silence the Dict/Tuple overloading Error
         except pg.DatabaseError as e:
             await conn.rollback()  # Reset Database, InFailedSqlTransaction Err thrown if not reset

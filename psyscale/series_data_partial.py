@@ -1,14 +1,15 @@
 "Series Data Partial Class Functions"
 
 from enum import StrEnum
+from io import BytesIO
 import logging
 from typing import Iterable, Literal, Optional
 
-from pandas import DataFrame, Timedelta, Timestamp
+from pandas import DataFrame, DatetimeIndex, Timedelta, Timestamp
+import pandas
 
 from psyscale.async_core import PsyscaleAsyncCore
 from psyscale.psql.timeseries import AGGREGATE_ARGS, TICK_ARGS, AggregateArgs, TickArgs
-
 from .series_df import Series_DF
 from .psql import (
     MetadataInfo,
@@ -147,24 +148,19 @@ class SeriesDataPartial(PsyscaleCore):
                     timeframe,
                     src_table.period,
                 )
-                cmd = self[Op.SELECT, SeriesTbls.CALCULATE_AGGREGATE](
+                cmd = self[Op.COPY, SeriesTbls.CALCULATE_AGGREGATE](
                     schema, src_table, timeframe, pkey, rth, start, end, limit, _rtns
                 )
             else:
                 # Works for both Aggregates and Raw Tick Data Retrieval
-                cmd = self[Op.SELECT, SeriesTbls.RAW_AGGREGATE](
+                cmd = self[Op.COPY, SeriesTbls.RAW_AGGREGATE](
                     schema, src_table, pkey, rth, start, end, limit, _rtns
                 )
 
-            cursor.execute(cmd)
-            rsp = cursor.fetchall()
-            if len(rsp) == 0:
-                return None
-            else:
-                _rtn = DataFrame(rsp[0])
-                # tz_convert to use an expected tz of 'UTC' over 'etc/utc'
-                _rtn["dt"] = _rtn["dt"].dt.tz_convert("UTC")
-                return _rtn
+            buffer = BytesIO()
+            with cursor.copy(cmd) as copy:
+                buffer.writelines(copy)
+            return _bytes_to_df(buffer)
 
     def upsert_series(
         self,
@@ -377,21 +373,21 @@ class AsyncSeriesDataPartial(PsyscaleAsyncCore, SeriesDataPartial):
         )
 
         # Inject the data through a temporary table
-        with self._cursor(raise_err=True) as cursor:
-            # Create & Inject the Data into a Temporary Table
-            cursor.execute(self[Op.CREATE, buffer_tbl_type](table))
+        async with self._acursor(raise_err=True) as cursor:
+            await cursor.execute(self[Op.CREATE, buffer_tbl_type](table))
             copy_cmd = self[Op.COPY, buffer_tbl_type](
                 # Sends the COPY Cmd & the order of the Columns of the Dataframe
                 [str(c) for c in data.columns]
             )
-            with cursor.copy(copy_cmd) as copy:
-                for row in data.itertuples(index=False, name=None):
-                    # Writes each row as a Tuple that matches the Dataframe Column Order
-                    copy.write_row(row)
+            async with cursor.copy(copy_cmd) as copy:
+                for row in data.itertuples(index=False):
+                    # You'd think that calling await millions of times
+                    # would produce a lot of overhead.... somehow it doesn't
+                    await copy.write_row(row)
 
             # Merge the Temp Table By inserting / upserting from the Temporary Table
             _op = Op.UPSERT if on_conflict == "update" else Op.INSERT
-            cursor.execute(
+            await cursor.execute(
                 self[_op, buffer_tbl_type](metadata.schema_name, table, pkey)
             )
             log.info("Symbol Data Upsert Status Message: %s", cursor.statusmessage)
@@ -413,6 +409,11 @@ class AsyncSeriesDataPartial(PsyscaleAsyncCore, SeriesDataPartial):
     ) -> Optional[DataFrame]:
         """
         Fetch Series Data from the Database Aggregating the desired data as needed.
+
+        CAVEAT: While this does work and is Asynchronous, there is no way to decouple
+        the Select Query & the COPY FROM operation. While the former would benefit
+        from an await, awaiting the latter slows down the data retrieval a lot.
+        Overall this function takes about 60% longer than the synchronous version.
 
         -- PARAMS --
         - symbol : Int | Str
@@ -515,24 +516,20 @@ class AsyncSeriesDataPartial(PsyscaleAsyncCore, SeriesDataPartial):
                     timeframe,
                     src_table.period,
                 )
-                cmd = self[Op.SELECT, SeriesTbls.CALCULATE_AGGREGATE](
+                cmd = self[Op.COPY, SeriesTbls.CALCULATE_AGGREGATE](
                     schema, src_table, timeframe, pkey, rth, start, end, limit, _rtns
                 )
             else:
                 # Works for both Aggregates and Raw Tick Data Retrieval
-                cmd = self[Op.SELECT, SeriesTbls.RAW_AGGREGATE](
+                cmd = self[Op.COPY, SeriesTbls.RAW_AGGREGATE](
                     schema, src_table, pkey, rth, start, end, limit, _rtns
                 )
 
-            await cursor.execute(cmd)
-            rsp = await cursor.fetchall()
-            if len(rsp) == 0:
-                return None
-            else:
-                _rtn = DataFrame(rsp[0])
-                # tz_convert to use an expected tz of 'UTC' over 'etc/utc'
-                _rtn["dt"] = _rtn["dt"].dt.tz_convert("UTC")
-                return _rtn
+            buffer = BytesIO()
+            async with cursor.copy(cmd) as copy:
+                async for line in copy:
+                    buffer.write(line)
+            return _bytes_to_df(buffer)
 
     async def refresh_aggregate_metadata_async(self):
         """
@@ -673,3 +670,21 @@ def _filter_redundant_datapoints(data: DataFrame, metadata: MetadataInfo) -> Dat
         data = data[dt_filter]
 
     return data
+
+
+def _bytes_to_df(buffer: BytesIO) -> DataFrame | None:
+    buffer.seek(0)
+    _rtn = pandas.read_csv(buffer)
+    if len(_rtn) == 0:
+        return None
+
+    # Cursed? yes. Faster? Also yes.
+    if _rtn["dt"].dtype == "int64":
+        _rtn["dt"] = (_rtn["dt"] * 1e9).astype("datetime64[ns, UTC]")  # type: ignore
+        # The proper way to do it...
+        # _rtn["dt"] = pandas.to_datetime(_rtn["dt"], utc=True)
+    else:
+        _rtn["dt"] = DatetimeIndex(_rtn["dt"])
+        # When returning tick data a timestamp is returned as a string.
+        # its much slower, but retains the sub-second timestamp resolution
+    return _rtn

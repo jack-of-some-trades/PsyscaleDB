@@ -564,6 +564,56 @@ def select_aggregates(
     )
 
 
+def select_aggregates_copy(
+    schema: Schema,
+    table: AssetTable,
+    pkey: int,
+    rth: bool,
+    start: Optional[Timestamp],
+    end: Optional[Timestamp],
+    _limit: Optional[int],
+    rtn_args: set[str],
+) -> sql.Composed:
+
+    _filters: list[Filter] = [("pkey", "=", pkey)]
+    if start is not None:
+        _filters.append(("dt", ">=", start))
+    if end is not None:
+        _filters.append(("dt", "<", end))
+
+    # Filter by rth if accessing a table that has both rth and eth
+    if rth and table.ext and table.rth is None:
+        _filters.append(("rth", "=", 0))
+
+    if "rth" in rtn_args and table.ext and table.rth is True:
+        # 'rth' Doesn't exist in the table we are selecting from.
+        rtn_args.remove("rth")
+
+    rtn_args -= {"dt"}  # dt already ensured as a return
+    if table.period == Timedelta(0):
+        dt_arg = "dt"
+        _ordered_rtn_args = [v for v in get_args(TickArgs) if v in rtn_args]
+    else:
+        dt_arg = "EXTRACT(EPOCH FROM dt)::BIGINT as dt"
+        _ordered_rtn_args = [v for v in get_args(AggregateArgs) if v in rtn_args]
+
+    # Select all the needed data, then reorient it so it is returned by column instead of by row
+    return sql.SQL(
+        "COPY ( SELECT "
+        + dt_arg
+        + """, {rtn_args} FROM {schema_name}.{table_name}{filter}{order}{limit}
+        ) TO STDOUT WITH CSV HEADER;
+    """
+    ).format(
+        schema_name=sql.Identifier(schema),
+        table_name=sql.Identifier(str(table)),
+        rtn_args=arg_list(_ordered_rtn_args),
+        filter=where(_filters),
+        order=order("dt", True),
+        limit=limit(_limit),
+    )
+
+
 def calculate_aggregates(
     schema: Schema,
     src_table: AssetTable,
@@ -618,6 +668,57 @@ def calculate_aggregates(
         rtn_arrays=sql.SQL(",\n").join(
             [_array_select(col) for col in _ordered_rtn_args]
         ),
+    )
+
+
+def calculate_aggregates_copy(
+    schema: Schema,
+    src_table: AssetTable,
+    timeframe: Timedelta,
+    pkey: int,
+    rth: bool,
+    start: Optional[Timestamp],
+    end: Optional[Timestamp],
+    _limit: Optional[int],
+    rtn_args: set[str],
+) -> sql.Composed:
+
+    _filters: list[Filter] = [("pkey", "=", pkey)]
+    if start is not None:
+        _filters.append(("dt", ">=", start))
+    if end is not None:
+        _filters.append(("dt", "<", end))
+
+    if src_table.has_rth and rth:
+        # Filter by rth if accessing a table that has both rth and eth
+        _filters.append(("rth", "=", 0))
+    if not src_table.has_rth and "rth" in rtn_args:
+        # 'rth' Doesn't exist in the table we are selecting from.
+        rtn_args.remove("rth")
+
+    rtn_args -= {"dt"}  # dt is Guaranteed to be returned
+    if src_table.period == Timedelta(0):
+        _inner_sel_args = _tick_inner_select_args(rtn_args)
+    else:
+        _inner_sel_args = _agg_inner_select_args(rtn_args)
+
+    return sql.SQL(
+        """
+        COPY (
+            SELECT
+                EXTRACT(EPOCH FROM (time_bucket({interval}, dt, ({origin_select}))))::BIGINT as dt,
+                {inner_select_args}
+            FROM {schema}.{table_name}{filters} GROUP BY 1 ORDER BY 1{limit} 
+        ) TO STDOUT WITH CSV HEADER;
+        """
+    ).format(
+        schema=sql.Identifier(schema),
+        table_name=sql.Identifier(repr(src_table)),
+        origin_select=_select_origin(schema, src_table.asset_class, rth, timeframe),
+        interval=sql.Literal(str(int(timeframe.total_seconds())) + " seconds"),
+        inner_select_args=sql.SQL(", ").join(_inner_sel_args),
+        filters=where(_filters),
+        limit=limit(_limit),
     )
 
 
