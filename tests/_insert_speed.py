@@ -45,8 +45,8 @@ MINUTE_CONFIG = TimeseriesConfig(
 @pytest.fixture(scope="module")
 def spy_data():
     t_start = time()
-    # ~ 1.8M Rows of data to be inserted
-    df = pd.read_csv("example_data/spy_data.csv")
+    # Replace the *s with the name of a large csv file. I did ~1.75M Rows
+    df = pd.read_csv("example_data/***.csv")
     # pre-mark the 'rth' column, remove dt duplicate column that's generated
     print(f"Spy Data Fetch Time : {time() - t_start}s")
     yield Series_DF(df, "NYSE").df.drop(columns="dt")
