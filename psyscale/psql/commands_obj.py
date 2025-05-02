@@ -112,9 +112,11 @@ OPERATION_MAP: OperationMap = {
         AssetTbls.SYMBOLS: partial(gen.update, Schema.SECURITY, AssetTbls.SYMBOLS),
     },
     Operation.COPY: {
+        AssetTbls.SYMBOLS_BUFFER: sec.copy_symbols,
         SeriesTbls.TICK_BUFFER: ts.copy_ticks,
         SeriesTbls.RAW_AGG_BUFFER: ts.copy_aggregates,
-        AssetTbls.SYMBOLS_BUFFER: sec.copy_symbols,
+        SeriesTbls.RAW_AGGREGATE: ts.select_aggregates_copy,
+        SeriesTbls.CALCULATE_AGGREGATE: ts.calculate_aggregates_copy,
     },
     Operation.SELECT: {
         GenericTbls.TABLE: gen.select,

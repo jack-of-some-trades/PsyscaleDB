@@ -1,7 +1,6 @@
 "Script to Inject Symbols from Broker APIs"
 
 # pylint: disable='missing-function-docstring'
-import asyncio
 from json import dumps
 import logging
 from time import time
@@ -12,8 +11,7 @@ import pandas as pd
 
 from broker_apis.alpaca_api import AlpacaAPI
 
-from psyscale import set_psyscale_log_level
-from psyscale.manager import PsyscaleMod
+from psyscale import PsyscaleDB, set_psyscale_log_level
 
 dotenv.load_dotenv(dotenv.find_dotenv())
 
@@ -33,14 +31,14 @@ STRICT_SYMBOL_SEARCH: bool | Literal["ILIKE", "LIKE", "="] = False
 
 def main():
     on_conflict: Literal["error", "update"] = "update"
-    db = PsyscaleMod()
+    db = PsyscaleDB()
 
     _update_stored_symbols(db)
     _import_alpaca(db, on_conflict)
     db.refresh_aggregate_metadata()
 
 
-def _update_stored_symbols(db: PsyscaleMod):
+def _update_stored_symbols(db: PsyscaleDB):
     """
     Update the Database to set list of symbols filtered by the above [SYMBOLS_TO_IMPORT]
     filters to 'store_[]=True' so they get imported.
@@ -113,7 +111,7 @@ def _update_stored_symbols(db: PsyscaleMod):
                     log.info("Skipping Symbol")
 
 
-def _import_alpaca(db: PsyscaleMod, on_conflict: Literal["error", "update"]):
+def _import_alpaca(db: PsyscaleDB, on_conflict: Literal["error", "update"]):
     "Select all the Stored Symbols from Alpaca and fetch & store their most recent data"
     alpaca_api = AlpacaAPI()
 
@@ -136,10 +134,13 @@ def _import_alpaca(db: PsyscaleMod, on_conflict: Literal["error", "update"]):
         )
 
         # Fetch All the Metadata for the Symbol showing what data needs to be fetched
-        metadata_list = db.get_all_symbol_series_metadata(symbol["pkey"])
+        metadata_list = db.stored_metadata(symbol["pkey"], _all=True)
         log.debug("Metadata List: %s", metadata_list)
 
         for metadata in metadata_list:
+            if not getattr(metadata.table, "raw"):
+                continue  # Table must be a raw table to insert data
+
             log.info(
                 "Fetching Data @ Timeframe: '%s' from '%s' Forward ...",
                 str(metadata.timeframe),
@@ -162,7 +163,7 @@ def _import_alpaca(db: PsyscaleMod, on_conflict: Literal["error", "update"]):
 
             # Pass the data off to the database to be inserted
             t_start = time()
-            db.upsert_symbol_data(
+            db.upsert_series(
                 symbol["pkey"],
                 metadata,
                 data,

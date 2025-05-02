@@ -3,16 +3,15 @@
 import dotenv
 from pandas import Timedelta, Timestamp
 
-from psyscale import set_psyscale_log_level
+from psyscale import PsyscaleDB, set_psyscale_log_level
 from psyscale.dev import TimeseriesConfig, DEFAULT_AGGREGATES
-from psyscale.manager import PsyscaleMod
 
 set_psyscale_log_level("INFO")
 
 
 def main():
     dotenv.load_dotenv(dotenv.find_dotenv())
-    db = PsyscaleMod()
+    db = PsyscaleDB()
 
     db.configure_timeseries_schema(
         minute_tables=STD_MINUTE_CONFIG,

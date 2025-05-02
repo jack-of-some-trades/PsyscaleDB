@@ -75,6 +75,7 @@ class MetadataInfo:
     respectfully) for a given data table (schema_name & table_name)
     """
 
+    pkey: int
     table_name: str
     schema_name: str | StrEnum
     start_date: Timestamp

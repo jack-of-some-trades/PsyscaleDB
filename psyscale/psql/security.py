@@ -316,7 +316,13 @@ def refresh_timeseries_metadata_view() -> sql.Composed:
 
 def select_timeseries_metadata(
     filters: list[Filter] = [],
-    rtn_args: list[str] = ["table_name", "schema_name", "start_date", "end_date"],
+    rtn_args: list[str] = [
+        "pkey",
+        "table_name",
+        "schema_name",
+        "start_date",
+        "end_date",
+    ],
 ) -> sql.Composed:
     return select(Schema.SECURITY, AssetTbls._METADATA, rtn_args, filters)
 
