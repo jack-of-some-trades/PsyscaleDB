@@ -6,14 +6,12 @@ import logging
 from inspect import stack
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import (
-    Any,
     AsyncIterator,
     Dict,
     List,
     Literal,
     Mapping,
     Optional,
-    Self,
     Tuple,
     TypeAlias,
     overload,

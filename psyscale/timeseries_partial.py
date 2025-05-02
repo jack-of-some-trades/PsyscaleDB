@@ -1,9 +1,17 @@
 "Psyscale Partial Class to add Timeseries Schema Configuration script"
 
+from abc import abstractmethod
+from enum import StrEnum
 import logging
-from typing import Optional, get_args
+from typing import Any, Dict, Iterable, Literal, Optional, get_args
+from itertools import chain
 
-from pandas import Timedelta
+import psycopg as pg
+from pandas import DataFrame, Timestamp, Timedelta
+
+from psyscale.async_core import PsyscaleAsyncCore
+from psyscale.psql.orm import MetadataArgs, MetadataInfo
+from psyscale.psql.timeseries import AggregateArgs, TickArgs
 
 from .psql import (
     GenericTbls,
@@ -14,15 +22,36 @@ from .psql import (
     Commands,
 )
 
-from .core import PsyscaleCore, TupleCursor
+from .core import PsyscaleConnectParams, PsyscaleCore, TupleCursor
 
 log = logging.getLogger("psyscale_log")
 
-# pylint: disable='protected-access'
+# pylint: disable='missing-function-docstring','unused-argument','protected-access'
 
 
-class ConfigureTimeseriesPartial(PsyscaleCore):
-    "Psyscale Partial Class to add Timeseries Schema Configuration script"
+class TimeseriesPartialAbstract(PsyscaleCore):
+    """
+    Psyscale Partial Timeseries Abstract base Class to add Timeseries Schema Configuration script.
+
+    Defines abstract methods for MetadataPartial & Series Partial. Complicated Class structiure is
+    done to organize the complex functionality required by the Psyscale Class.
+    """
+
+    def __init__(
+        self,
+        conn_params: Optional[PsyscaleConnectParams | str] = None,
+        *,
+        down_on_del: bool = False,
+        docker_compose_fpath: Optional[str] = None,
+    ):
+        # Chain the __init__ Docstring up the MRO since nothing changed
+        self.__class__.__init__.__doc__ = super().__init__.__doc__
+        super().__init__(
+            conn_params,
+            down_on_del=down_on_del,
+            docker_compose_fpath=docker_compose_fpath,
+        )
+        self._read_db_timeseries_config()
 
     def configure_timeseries_schema(
         self,
@@ -64,9 +93,143 @@ class ConfigureTimeseriesPartial(PsyscaleCore):
         # directly after setting the config
         self._read_db_timeseries_config()
 
+    def _read_db_timeseries_config(self):
+        "Read off the TimeseriesConfig for each schema by probing all the table names."
+        self._table_config: Dict[Schema, TimeseriesConfig] = {}
+
+        with self._cursor() as cursor:
+            for schema in (Schema.TICK_DATA, Schema.MINUTE_DATA, Schema.AGGREGATE_DATA):
+                # ---- ---- Read the Origin Timestamp Table ---- ----
+                origin_map = {}
+                try:
+                    cursor.execute(
+                        self[Op.SELECT, SeriesTbls._ORIGIN](schema, _all=True)
+                    )
+                    for (asset, *origins), *_ in cursor.fetchall():
+                        # Cursed parsing for the cursor response tuple.
+                        # Origins must be RTH, ETH, then HTF
+                        origin_map[asset] = tuple(map(Timestamp, origins))
+
+                except pg.DatabaseError:
+                    # Origin Table does not exist, Rollback to clear error state
+                    cursor.connection.rollback()
+                    log.debug("Origin table not found in Schema: %s", schema)
+
+                # ---- Reconstruct Timeseries Config from existing table names ----
+                cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA_TABLES](schema))
+                tbl_names = [
+                    rsp[0]
+                    for rsp in cursor.fetchall()
+                    if rsp[0] != SeriesTbls._ORIGIN.value
+                ]
+                config = TimeseriesConfig.from_table_names(tbl_names, origin_map)
+                self._table_config[schema] = config
+
+                # ---- ---- Check that all the origin times are preset ---- ----
+                missing_asset_origins = set(config.asset_classes).difference(
+                    origin_map.keys()
+                )
+                if len(missing_asset_origins) > 0:
+                    log.error(
+                        "TimescaleDB Origins Table in schema '%s' is missing values "
+                        "for the following assets: %s",
+                        schema,
+                        missing_asset_origins,
+                    )
+
+        # Give a notification on how to setup the database if it appears like it hasn't been
+        all_assets = {
+            chain(map(lambda x: x.asset_classes, self._table_config.values()))
+        }
+        if len(all_assets) == 0:
+            log.warning(
+                "No Asset Types Detected in the Database. To Initialize the Database call "
+                "PsyscaleDB.configure_timeseries_schema() with the appropriate arguments.\n"
+            )
+
+    # region ---- ---- Abstract methods implemented by partial subclasses ---- ----
+    @abstractmethod
+    def inferred_metadata(
+        self, symbol: int | str, timeframe: Timedelta, rth: bool = False
+    ) -> MetadataInfo | None: ...
+
+    @abstractmethod
+    def stored_metadata(
+        self,
+        symbol: int | str,
+        filters: dict[MetadataArgs | str, Any] = {},
+        *,
+        _all: bool = False,
+    ) -> list[MetadataInfo]: ...
+
+    @abstractmethod
+    def manually_refresh_aggregate_metadata(self): ...
+
+    @abstractmethod
+    def get_series(
+        self,
+        symbol: int | str,
+        timeframe: Timedelta,
+        start: Optional[Timestamp] = None,
+        end: Optional[Timestamp] = None,
+        limit: Optional[int] = None,
+        rth: bool = False,
+        rtn_args: Optional[Iterable[AggregateArgs | TickArgs | str]] = None,
+        *,
+        mdata: Optional[MetadataInfo] = None,
+    ) -> Optional[DataFrame]: ...
+
+    @abstractmethod
+    def upsert_series(
+        self,
+        pkey: int,
+        metadata: MetadataInfo,
+        data: DataFrame,
+        exchange: Optional[str] = None,
+        *,
+        on_conflict: Literal["update", "error", "ignore"] = "ignore",
+    ): ...
+
+    @abstractmethod
+    def refresh_aggregate_metadata(self): ...
+
+    # endregion
+
+
+class TimeseriesPartialAsyncAbstract(PsyscaleAsyncCore):
+    "Abstract Class for Async Timeseries Database Operations"
+
+    @abstractmethod
+    async def upsert_series_async(
+        self,
+        pkey: int,
+        metadata: MetadataInfo,
+        data: DataFrame,
+        exchange: Optional[str] = None,
+        *,
+        on_conflict: Literal["update", "error", "ignore"] = "ignore",
+    ): ...
+
+    @abstractmethod
+    async def get_series_async(
+        self,
+        symbol: int | str,
+        timeframe: Timedelta,
+        start: Optional[Timestamp] = None,
+        end: Optional[Timestamp] = None,
+        limit: Optional[int] = None,
+        rth: bool = False,
+        rtn_args: Optional[Iterable[AggregateArgs | TickArgs | str]] = None,
+        *,
+        mdata: Optional[MetadataInfo] = None,
+    ) -> Optional[DataFrame]: ...
+
+    @abstractmethod
+    async def refresh_aggregate_metadata_async(self): ...
+
 
 def _configure_timeseries_schema(
-    db: PsyscaleCore,
+    db: TimeseriesPartialAbstract,
     cursor: TupleCursor,
     schema: Schema,
     config: TimeseriesConfig,
@@ -292,3 +455,18 @@ def _del_timeseries_asset_classes(
             tbl_type = GenericTbls.TABLE if tbl.raw else GenericTbls.VIEW
             cursor.execute(cmd := cmds[Op.DROP, tbl_type](schema, tbl.table_name))
             log.debug(cmd.as_string())
+
+
+# pylint: disable='wrong-import-position'
+# At EOF import the Partials that are built on the above abstract classes
+# to create the partials that have the full functionality and are actually used.
+from .metadata_partial import MetadataPartial
+from .series_data_partial import SeriesDataPartial, AsyncSeriesDataPartial
+
+
+class TimerseriesPartial(MetadataPartial, SeriesDataPartial):
+    "Partial PsyscaleDB Class that includes all SeriesData & Metadata Functions"
+
+
+class TimeseriesAsyncPartial(MetadataPartial, AsyncSeriesDataPartial):
+    "Partial PsyscaleAsync Class that includes all Sync & Async SeriesData & Metadata Functions"

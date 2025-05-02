@@ -99,11 +99,11 @@ def test_01_metadata_fetch(psyscale_db: PsyscaleDB):
     aapl_pkey = aapl["pkey"]
 
     # No Data inserted yet, MetaData should be empty
-    metadata = psyscale_db.symbol_metadata(aapl_pkey)
+    metadata = psyscale_db.stored_metadata(aapl_pkey)
     assert len(metadata) == 0
 
     # Should show that we need to store data in the Minute table of minute schema
-    metadata = psyscale_db.symbol_metadata(aapl_pkey, _all=True)
+    metadata = psyscale_db.stored_metadata(aapl_pkey, _all=True)
     assert len(metadata) == 1
     metadata = metadata[0]
 
@@ -119,7 +119,7 @@ def test_01_metadata_fetch(psyscale_db: PsyscaleDB):
 def test_02_aggregate_data_insert(psyscale_db: PsyscaleDB, caplog, AAPL_MIN_DATA):
     # pkey and metadata fetch already asserted working in first test.
     aapl = psyscale_db.search_symbols({"store_minute": True})[0]
-    metadata = psyscale_db.symbol_metadata(aapl["pkey"], _all=True)[0]
+    metadata = psyscale_db.stored_metadata(aapl["pkey"], _all=True)[0]
 
     with pytest.raises(ValueError):
         # Should error since a 'rth' column is needed but not given.
@@ -153,7 +153,7 @@ def test_03_check_inserted_data(psyscale_db: PsyscaleDB, caplog):
 
     # Data is stored, but the metadata table should not reflect this yet.
     # it should only show this once the refresh data has been called.
-    metadata = psyscale_db.symbol_metadata(aapl["pkey"])
+    metadata = psyscale_db.stored_metadata(aapl["pkey"])
     assert len(metadata) == 0
 
     assert hasattr(psyscale_db, "_altered_tables")
@@ -167,7 +167,7 @@ def test_03_check_inserted_data(psyscale_db: PsyscaleDB, caplog):
     assert not hasattr(psyscale_db, "_altered_tables_mdata")
 
     # check what's available
-    metadata = psyscale_db.symbol_metadata(aapl["pkey"])
+    metadata = psyscale_db.stored_metadata(aapl["pkey"])
     assert len(metadata) == 4  # One for inserted data, 3 more for the aggregates
 
     minute_metadata = [m for m in metadata if m.timeframe == pd.Timedelta("1min")][0]
@@ -185,8 +185,7 @@ def test_03_check_inserted_data(psyscale_db: PsyscaleDB, caplog):
         pd.Timedelta("1min"),
         rth=False,
         rtn_args={"open", "high", "low", "close", "volume", "rth"},
-        asset_class=aapl["asset_class"],
-        schema=minute_metadata.schema_name,
+        mdata=minute_metadata,
     )
     assert inserted_data is not None
 
@@ -221,7 +220,7 @@ def test_03_check_inserted_data(psyscale_db: PsyscaleDB, caplog):
 
 def test_04_upsert_on_conflict_states(psyscale_db: PsyscaleDB, AAPL_MIN_DATA, caplog):
     aapl = psyscale_db.search_symbols({"store_minute": True})[0]
-    metadata = psyscale_db.symbol_metadata(aapl["pkey"])[0]
+    metadata = psyscale_db.stored_metadata(aapl["pkey"])[0]
 
     alt_data = Series_DF(AAPL_MIN_DATA, "NYSE").df
     extra_cols = set(alt_data.columns).difference(AGGREGATE_ARGS)
@@ -346,7 +345,7 @@ def test_06_calculated_aggregates(psyscale_db: PsyscaleDB, caplog):
 def test_07_tick_data_insert(psyscale_db: PsyscaleDB, caplog, TICK_DATA):
     # pkey and metadata fetch already asserted working in first test.
     goog = psyscale_db.search_symbols({"symbol": "goog"})[0]
-    metadata = psyscale_db.symbol_metadata(goog["pkey"], _all=True)[0]
+    metadata = psyscale_db.stored_metadata(goog["pkey"], _all=True)[0]
 
     with pytest.raises(ValueError):
         # Should error since a 'rth' column is needed but not given.
@@ -380,7 +379,7 @@ def test_08_check_inserted_tick_data(psyscale_db: PsyscaleDB):
 
     # Data is stored, but the metadata table should not reflect this yet.
     # it should only show this once the refresh data has been called.
-    metadata = psyscale_db.symbol_metadata(goog["pkey"])
+    metadata = psyscale_db.stored_metadata(goog["pkey"])
     assert len(metadata) == 0
 
     assert hasattr(psyscale_db, "_altered_tables")
@@ -393,7 +392,7 @@ def test_08_check_inserted_tick_data(psyscale_db: PsyscaleDB):
     assert not hasattr(psyscale_db, "_altered_tables_mdata")
 
     # check what's available
-    metadata = psyscale_db.symbol_metadata(goog["pkey"])
+    metadata = psyscale_db.stored_metadata(goog["pkey"])
     assert len(metadata) == 3  # One for inserted data, 3 more for the aggregates
 
     # check that the full dataset got inserted

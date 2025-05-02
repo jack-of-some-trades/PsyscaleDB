@@ -95,7 +95,7 @@ async def async_db(async_db_url):
 
 def test_sync_insert_speed(sync_db: PsyscaleDB, spy_data):
     spy = sync_db.search_symbols({"symbol": "spy"})[0]
-    mdata = sync_db.symbol_metadata("spy", _all=True)
+    mdata = sync_db.stored_metadata("spy", _all=True)
     minute_metadata = [m for m in mdata if m.timeframe == pd.Timedelta("1min")][0]
 
     t_start = time()
@@ -111,7 +111,7 @@ def test_sync_withdraw_speed(sync_db: PsyscaleDB):
 
 async def test_async_insert_speed(async_db: PsyscaleAsync, spy_data):
     spy = async_db.search_symbols({"symbol": "spy"})[0]
-    mdata = async_db.symbol_metadata("spy", _all=True)
+    mdata = async_db.stored_metadata("spy", _all=True)
     minute_metadata = [m for m in mdata if m.timeframe == pd.Timedelta("1min")][0]
 
     t_start = time()

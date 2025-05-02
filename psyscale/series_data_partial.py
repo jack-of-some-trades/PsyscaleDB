@@ -1,6 +1,5 @@
 "Series Data Partial Class Functions"
 
-from enum import StrEnum
 from io import BytesIO
 import logging
 from typing import Iterable, Literal, Optional
@@ -8,8 +7,11 @@ from typing import Iterable, Literal, Optional
 from pandas import DataFrame, DatetimeIndex, Timedelta, Timestamp
 import pandas
 
-from psyscale.async_core import PsyscaleAsyncCore
 from psyscale.psql.timeseries import AGGREGATE_ARGS, TICK_ARGS, AggregateArgs, TickArgs
+from psyscale.timeseries_partial import (
+    TimeseriesPartialAsyncAbstract,
+    TimeseriesPartialAbstract,
+)
 from .series_df import Series_DF
 from .psql import (
     MetadataInfo,
@@ -18,17 +20,14 @@ from .psql import (
     AssetTbls,
     SeriesTbls,
     AssetTable,
-    GenericTbls,
 )
-
-from .core import PsyscaleCore
 
 log = logging.getLogger("psyscale_log")
 
-# pylint: disable='protected-access'
+# pylint: disable='protected-access','abstract-method'
 
 
-class SeriesDataPartial(PsyscaleCore):
+class SeriesDataPartial(TimeseriesPartialAbstract):
     "Series Data Upsert and Fetch Functions"
 
     def get_series(
@@ -41,8 +40,7 @@ class SeriesDataPartial(PsyscaleCore):
         rth: bool = False,
         rtn_args: Optional[Iterable[AggregateArgs | TickArgs | str]] = None,
         *,
-        schema: Optional[str | StrEnum] = None,
-        asset_class: Optional[str] = None,
+        mdata: Optional[MetadataInfo] = None,
     ) -> Optional[DataFrame]:
         """
         Fetch Series Data from the Database Aggregating the desired data as needed.
@@ -65,68 +63,15 @@ class SeriesDataPartial(PsyscaleCore):
             - Unknown args are ignored
             - Note: 'dt' will always be returned even if not included.
 
-        - schema : Optional str | strEnum
-            - Data Schema to fetch the data from.
-        - asset_class : Optional str
-            - Asset_class of the symbol requested
-                - Note: Both asset_class & schema will be determined from the pkey/symbol if
-                necessary. However, if both are already known and given as args that information
-                will be used in place of querying the database for it.
+        - mdata : Optional MetadataInfo
+            - Optional argument. This MetadataInfo is the result from calling inferred_metadata()
+            for this pkey & timeframe. If not given, this function will retrieve it as needed.
         """
-
-        # Search Metadata for available data at TF or lower
-        with self._cursor(dict_cursor=True) as cursor:
-
-            # region -- Fetch Asset Class & Schema & Pkey if necessary --
-            if asset_class is None or schema is None or isinstance(symbol, str):
-                if isinstance(symbol, str):
-                    _filters = [("symbol", "ILIKE", symbol)]
-                else:
-                    _filters = [("pkey", "=", symbol)]
-                cursor.execute(
-                    self[Op.SELECT, GenericTbls.TABLE](
-                        Schema.SECURITY,
-                        AssetTbls.SYMBOLS,
-                        [
-                            "pkey",
-                            "asset_class",
-                            "store_tick",
-                            "store_minute",
-                            "store_aggregate",
-                        ],
-                        _filters,
-                        limit,
-                    )
-                )
-                rsp = cursor.fetchall()
-                if len(rsp) == 0:
-                    log.warning("Unknown key : %s", symbol)
-                    return
-                rsp = rsp[0]
-
-                if rsp["store_minute"]:
-                    schema = Schema.MINUTE_DATA
-                elif rsp["store_aggregate"]:
-                    schema = Schema.AGGREGATE_DATA
-                elif rsp["store_tick"]:
-                    schema = Schema.TICK_DATA
-                else:
-                    log.warning("Symbol : %s is known, but not stored", symbol)
-                    return
-
-                pkey = rsp["pkey"]
-                asset_class = rsp["asset_class"]
-                assert asset_class
-            else:
-                # Given schema, asset_class & integer pkey
-                pkey = symbol
-            # endregion
-
-            desired_table = AssetTable(asset_class, timeframe, False, False, rth)
+        if mdata is None:
             try:
-                src_table, need_to_calc = self._table_config[
-                    Schema(schema)
-                ].get_selection_source_table(desired_table)
+                # Fetch the inferred metadata to get the table that will
+                # be either aggregated, or copied from.
+                mdata = self.inferred_metadata(symbol, timeframe, rth)
             except AttributeError:
                 log.warning(
                     "Cannot Aggregate timeframe %s for symbol %s from the data in the database",
@@ -135,26 +80,32 @@ class SeriesDataPartial(PsyscaleCore):
                 )
                 return None
 
-            # Configure return args as a set
-            if rtn_args is None:
-                _rtns = {"dt", "open", "high", "low", "close", "volume", "price"}
-            else:
-                # sql formatting functions remove excess/ unkown args
-                _rtns = {*rtn_args}
+        if mdata is None:
+            return None
+        assert mdata.table
 
-            if need_to_calc:
+        # Configure return args as a set
+        if rtn_args is None:
+            _rtns = {"dt", "open", "high", "low", "close", "volume", "price"}
+        else:
+            # sql formatting functions remove excess/ unkown args
+            _rtns = {*rtn_args}
+
+        # Search Metadata for available data at TF or lower
+        with self._cursor(dict_cursor=True) as cursor:
+            if mdata.table.period != timeframe:
                 log.info(
                     "Calculating Aggregate at Timeframe : %s, from %s Timeframe",
                     timeframe,
-                    src_table.period,
+                    mdata.table.period,
                 )
                 cmd = self[Op.COPY, SeriesTbls.CALCULATE_AGGREGATE](
-                    schema, src_table, timeframe, pkey, rth, start, end, limit, _rtns
+                    mdata, timeframe, rth, start, end, limit, _rtns
                 )
             else:
                 # Works for both Aggregates and Raw Tick Data Retrieval
                 cmd = self[Op.COPY, SeriesTbls.RAW_AGGREGATE](
-                    schema, src_table, pkey, rth, start, end, limit, _rtns
+                    mdata, rth, start, end, limit, _rtns
                 )
 
             buffer = BytesIO()
@@ -186,7 +137,7 @@ class SeriesDataPartial(PsyscaleCore):
         - exchange : str | None
             - Exchange that the Asset is traded on. This will be passed to pandas_market_calendars
             so the RTH/ETH session of each datapoint can be determined and stored as necessary.
-            - None can be passed for 24/7 Exchanges such as Crypto. (Note: Forex would require 24/5 be passed)
+            - None can be passed for 24/7 Exchanges such as Crypto. Note: Forex would require 24/5
         - on_conflict : Literal["update", "error", "ignore"] = "error"
             - Action to take when a UNIQUE conflict occurs. Erroring allows for faster insertion
             if it can be ensured that given data will be unique
@@ -326,6 +277,7 @@ class SeriesDataPartial(PsyscaleCore):
             # Construct a new metadata instance to add to the records
             # Start / End Dates represent ranges that were updated/inserted
             mdata = MetadataInfo(
+                -1,  # pkey irrelevant here. The table is what's tracked, not the symbol
                 table.table_name,
                 metadata.schema_name,
                 data.iloc[0]["dt"],
@@ -336,7 +288,7 @@ class SeriesDataPartial(PsyscaleCore):
             self._altered_tables_mdata[metadata.schema_name][table.table_name] = mdata
 
 
-class AsyncSeriesDataPartial(PsyscaleAsyncCore, SeriesDataPartial):
+class AsyncSeriesDataPartial(TimeseriesPartialAsyncAbstract, SeriesDataPartial):
     "Async extension for Series Data Upsert and Fetch Functions"
 
     async def upsert_series_async(
@@ -404,8 +356,7 @@ class AsyncSeriesDataPartial(PsyscaleAsyncCore, SeriesDataPartial):
         rth: bool = False,
         rtn_args: Optional[Iterable[AggregateArgs | TickArgs | str]] = None,
         *,
-        schema: Optional[str | StrEnum] = None,
-        asset_class: Optional[str] = None,
+        mdata: Optional[MetadataInfo] = None,
     ) -> Optional[DataFrame]:
         """
         Fetch Series Data from the Database Aggregating the desired data as needed.
@@ -433,68 +384,16 @@ class AsyncSeriesDataPartial(PsyscaleAsyncCore, SeriesDataPartial):
             - Unknown args are ignored
             - Note: 'dt' will always be returned even if not included.
 
-        - schema : Optional str | strEnum
-            - Data Schema to fetch the data from.
-        - asset_class : Optional str
-            - Asset_class of the symbol requested
-                - Note: Both asset_class & schema will be determined from the pkey/symbol if
-                necessary. However, if both are already known and given as args that information
-                will be used in place of querying the database for it.
+        - mdata : Optional MetadataInfo
+            - Optional argument. This MetadataInfo is the result from calling inferred_metadata()
+            for this pkey & timeframe. If not given, this function will retrieve it as needed.
         """
 
-        # Search Metadata for available data at TF or lower
-        async with self._acursor(dict_cursor=True) as cursor:
-
-            # region -- Fetch Asset Class & Schema & Pkey if necessary --
-            if asset_class is None or schema is None or isinstance(symbol, str):
-                if isinstance(symbol, str):
-                    _filters = [("symbol", "ILIKE", symbol)]
-                else:
-                    _filters = [("pkey", "=", symbol)]
-                await cursor.execute(
-                    self[Op.SELECT, GenericTbls.TABLE](
-                        Schema.SECURITY,
-                        AssetTbls.SYMBOLS,
-                        [
-                            "pkey",
-                            "asset_class",
-                            "store_tick",
-                            "store_minute",
-                            "store_aggregate",
-                        ],
-                        _filters,
-                        limit,
-                    )
-                )
-                rsp = await cursor.fetchall()
-                if len(rsp) == 0:
-                    log.warning("Unknown key : %s", symbol)
-                    return
-                rsp = rsp[0]
-
-                if rsp["store_minute"]:
-                    schema = Schema.MINUTE_DATA
-                elif rsp["store_aggregate"]:
-                    schema = Schema.AGGREGATE_DATA
-                elif rsp["store_tick"]:
-                    schema = Schema.TICK_DATA
-                else:
-                    log.warning("Symbol : %s is known, but not stored", symbol)
-                    return
-
-                pkey = rsp["pkey"]
-                asset_class = rsp["asset_class"]
-                assert asset_class
-            else:
-                # Given schema, asset_class & integer pkey
-                pkey = symbol
-            # endregion
-
-            desired_table = AssetTable(asset_class, timeframe, False, False, rth)
+        if mdata is None:
             try:
-                src_table, need_to_calc = self._table_config[
-                    Schema(schema)
-                ].get_selection_source_table(desired_table)
+                # Fetch the inferred metadata to get the table that will
+                # be either aggregated, or copied from.
+                mdata = self.inferred_metadata(symbol, timeframe, rth)
             except AttributeError:
                 log.warning(
                     "Cannot Aggregate timeframe %s for symbol %s from the data in the database",
@@ -503,6 +402,18 @@ class AsyncSeriesDataPartial(PsyscaleAsyncCore, SeriesDataPartial):
                 )
                 return None
 
+        if mdata is None:
+            return None
+        assert mdata.table
+
+        # Configure return args as a set
+        if rtn_args is None:
+            _rtns = {"dt", "open", "high", "low", "close", "volume", "price"}
+        else:
+            # sql formatting functions remove excess/ unkown args
+            _rtns = {*rtn_args}
+
+        async with self._acursor() as cursor:
             # Configure return args as a set
             if rtn_args is None:
                 _rtns = {"dt", "open", "high", "low", "close", "volume", "price"}
@@ -510,19 +421,19 @@ class AsyncSeriesDataPartial(PsyscaleAsyncCore, SeriesDataPartial):
                 # sql formatting functions remove excess/ unkown args
                 _rtns = {*rtn_args}
 
-            if need_to_calc:
+            if mdata.table.period != timeframe:
                 log.info(
                     "Calculating Aggregate at Timeframe : %s, from %s Timeframe",
                     timeframe,
-                    src_table.period,
+                    mdata.table.period,
                 )
                 cmd = self[Op.COPY, SeriesTbls.CALCULATE_AGGREGATE](
-                    schema, src_table, timeframe, pkey, rth, start, end, limit, _rtns
+                    mdata, timeframe, rth, start, end, limit, _rtns
                 )
             else:
                 # Works for both Aggregates and Raw Tick Data Retrieval
                 cmd = self[Op.COPY, SeriesTbls.RAW_AGGREGATE](
-                    schema, src_table, pkey, rth, start, end, limit, _rtns
+                    mdata, rth, start, end, limit, _rtns
                 )
 
             buffer = BytesIO()
@@ -678,11 +589,9 @@ def _bytes_to_df(buffer: BytesIO) -> DataFrame | None:
     if len(_rtn) == 0:
         return None
 
-    # Cursed? yes. Faster? Also yes.
     if _rtn["dt"].dtype == "int64":
+        # Cursed? yes. Faster? Also yes.
         _rtn["dt"] = (_rtn["dt"] * 1e9).astype("datetime64[ns, UTC]")  # type: ignore
-        # The proper way to do it...
-        # _rtn["dt"] = pandas.to_datetime(_rtn["dt"], utc=True)
     else:
         _rtn["dt"] = DatetimeIndex(_rtn["dt"])
         # When returning tick data a timestamp is returned as a string.

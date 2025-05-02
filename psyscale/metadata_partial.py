@@ -3,8 +3,9 @@
 import logging
 from typing import Any
 
-from pandas import Timestamp
-from psyscale.core import PsyscaleCore, TupleCursor
+from pandas import Timedelta, Timestamp
+from psyscale.core import TupleCursor
+from psyscale.timeseries_partial import TimeseriesPartialAbstract
 
 from .psql import (
     METADATA_ARGS,
@@ -20,17 +21,68 @@ from .psql import (
 
 log = logging.getLogger("psyscale_log")
 
-# pylint: disable='protected-access'
+# pylint: disable='protected-access','abstract-method'
 
 
-class MetadataPartial(PsyscaleCore):
+class MetadataPartial(TimeseriesPartialAbstract):
     """
     Series Metadata related sub-routines. Relevant Table initialization handled by
     SymbolsPartial._ensure_securities_schema_format() to ensure symbols table is
     created first.
     """
 
-    def symbol_metadata(
+    def inferred_metadata(
+        self, symbol: int | str, timeframe: Timedelta, rth: bool = False
+    ) -> MetadataInfo | None:
+        """
+        Return the Metadata for a symbol at a given timeframe. This function will use the stored
+        metadata to infer what series data can be derived from the stored series data in the event
+        the desired timeframe / rth state is not directly stored.
+        """
+        with self._cursor(dict_cursor=True) as cursor:
+            # region ---- Fetch asset_class and stored state
+            if isinstance(symbol, str):
+                _filters = [("symbol", "ILIKE", symbol)]
+            else:
+                _filters = [("pkey", "=", symbol)]
+            cursor.execute(
+                self[Op.SELECT, GenericTbls.TABLE](
+                    Schema.SECURITY,
+                    AssetTbls.SYMBOLS,
+                    ["pkey", "asset_class", "source"],
+                    _filters,
+                )
+            )
+            rsp = cursor.fetchall()
+            if len(rsp) == 0:
+                log.warning("Unknown key : %s", symbol)
+                return None
+            if len(rsp) > 1:
+                log.info("ill defined key, using first result : %s", rsp[0])
+            rsp = rsp[0]
+
+            pkey = rsp["pkey"]
+            asset_class = rsp["asset_class"]
+            assert asset_class
+
+            cursor.execute(self[Op.SELECT, AssetTbls._METADATA](("pkey", "=", pkey)))
+            stored_mdata = [MetadataInfo(**row) for row in cursor.fetchall()]
+
+            if len(stored_mdata) == 0:
+                log.warning("Key '%s' is known, but not stored.", symbol)
+                return None
+        # endregion
+
+        _config = self._table_config[Schema(stored_mdata[0].schema_name)]
+        desired_table = AssetTable(asset_class, timeframe, False, False, rth)
+
+        # This is the table that will either be selected, or aggregated, from
+        # to produce the desired series
+        src_table = _config.get_aggregation_source(desired_table, rtn_self=True)
+        # Return the metadata associated with the src_table
+        return next(mdata for mdata in stored_mdata if mdata.table == src_table)
+
+    def stored_metadata(
         self,
         symbol: int | str,
         filters: dict[MetadataArgs | str, Any] = {},
@@ -214,7 +266,7 @@ def _fetch_all_metadata(db: MetadataPartial, pkey: int) -> list[MetadataInfo]:
     try:
         metadata = _fetch_stored_metadata(db, pkey)
         req_tables = db._table_config[schema].raw_tables(asset_class)
-        metadata.extend(_missing_metadata(metadata, req_tables, schema))
+        metadata.extend(_missing_metadata(pkey, metadata, req_tables, schema))
     except KeyError as e:
         raise KeyError(  # Reraise a more informative error.
             "Ensure configure_timeseries_schema has been run prior to inserting symbol data."
@@ -224,7 +276,10 @@ def _fetch_all_metadata(db: MetadataPartial, pkey: int) -> list[MetadataInfo]:
 
 
 def _missing_metadata(
-    stored_metadata: list[MetadataInfo], req_tables: list[AssetTable], schema: Schema
+    pkey: int,
+    stored_metadata: list[MetadataInfo],
+    req_tables: list[AssetTable],
+    schema: Schema,
 ) -> list[MetadataInfo]:
     "Determines what metadata is missing, if any, given a list of required tables"
     stored_tables = [mdata.table for mdata in stored_metadata]
@@ -232,6 +287,7 @@ def _missing_metadata(
     missing_tables = set(req_tables).difference(stored_tables)
     missing_metadata = [
         MetadataInfo(
+            pkey,
             table.table_name,
             schema,
             Timestamp("1800-01-01", tz="UTC"),  # Default values

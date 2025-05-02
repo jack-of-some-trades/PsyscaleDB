@@ -2,8 +2,6 @@
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from io import BytesIO
-from itertools import chain
 import logging
 import os
 import subprocess
@@ -24,7 +22,6 @@ from typing import (
     overload,
 )
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
-from pandas import DataFrame, Timestamp
 
 import psycopg as pg
 import psycopg.rows as pg_rows
@@ -38,9 +35,7 @@ from .psql import (
     OperationMap,
     Schema,
     AssetTbls,
-    SeriesTbls,
     Commands,
-    TimeseriesConfig,
 )
 
 
@@ -222,7 +217,6 @@ class PsyscaleCore:
         self.cmds = Commands()
         self.db_cfg = conn_params
         self._ensure_std_schemas_exist()
-        self._read_db_timeseries_config()
 
     def __getitem__(self, args: Tuple[Op, StrEnum]) -> Callable[..., sql.Composed]:
         "Accessor forwarder for the self.cmds object"
@@ -477,60 +471,6 @@ class PsyscaleCore:
         if p.returncode != 0:
             raise OSError(
                 f"Failed to start Docker-Compose with Err Msg: {p.stderr.decode()}"
-            )
-
-    def _read_db_timeseries_config(self):
-        "Read off the TimeseriesConfig for each schema by probing all the table names."
-        self._table_config: Dict[Schema, TimeseriesConfig] = {}
-
-        with self._cursor() as cursor:
-            for schema in (Schema.TICK_DATA, Schema.MINUTE_DATA, Schema.AGGREGATE_DATA):
-                # ---- ---- Read the Origin Timestamp Table ---- ----
-                origin_map = {}
-                try:
-                    cursor.execute(
-                        self[Op.SELECT, SeriesTbls._ORIGIN](schema, _all=True)
-                    )
-                    for (asset, *origins), *_ in cursor.fetchall():
-                        # Cursed parsing for the cursor response tuple.
-                        # Origins must be RTH, ETH, then HTF
-                        origin_map[asset] = tuple(map(Timestamp, origins))
-
-                except pg.DatabaseError:
-                    # Origin Table does not exist, Rollback to clear error state
-                    cursor.connection.rollback()
-                    log.debug("Origin table not found in Schema: %s", schema)
-
-                # ---- Reconstruct Timeseries Config from existing table names ----
-                cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA_TABLES](schema))
-                tbl_names = [
-                    rsp[0]
-                    for rsp in cursor.fetchall()
-                    if rsp[0] != SeriesTbls._ORIGIN.value
-                ]
-                config = TimeseriesConfig.from_table_names(tbl_names, origin_map)
-                self._table_config[schema] = config
-
-                # ---- ---- Check that all the origin times are preset ---- ----
-                missing_asset_origins = set(config.asset_classes).difference(
-                    origin_map.keys()
-                )
-                if len(missing_asset_origins) > 0:
-                    log.error(
-                        "TimescaleDB Origins Table in schema '%s' is missing values "
-                        "for the following assets: %s",
-                        schema,
-                        missing_asset_origins,
-                    )
-
-        # Give a notification on how to setup the database if it appears like it hasn't been
-        all_assets = {
-            chain(map(lambda x: x.asset_classes, self._table_config.values()))
-        }
-        if len(all_assets) == 0:
-            log.warning(
-                "No Asset Types Detected in the Database. To Initialize the Database call "
-                "PsyscaleDB.configure_timeseries_schema() with the appropriate arguments.\n"
             )
 
     def _ensure_std_schemas_exist(self):

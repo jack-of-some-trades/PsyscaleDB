@@ -8,30 +8,21 @@ import logging
 import sys
 from typing import Literal
 
+
 from .core import PsyscaleConnectParams
-from .metadata_partial import MetadataPartial
 from .symbols_partial import AsyncSymbolsPartial, SymbolsPartial
-from .timeseries_config_partial import ConfigureTimeseriesPartial
-from .series_data_partial import AsyncSeriesDataPartial, SeriesDataPartial
+from .timeseries_partial import TimerseriesPartial, TimeseriesAsyncPartial
 
 
-class PsyscaleDB(
-    ConfigureTimeseriesPartial, MetadataPartial, SeriesDataPartial, SymbolsPartial
-):
+class PsyscaleDB(TimerseriesPartial, SymbolsPartial):
     """
     Synchronous client interface for connecting to a PostgreSQL + TimescaleDB Database.
-
     Timescale DB Docker self-host instructions
     https://docs.timescale.com/self-hosted/latest/install/installation-docker/
     """
 
 
-class PsyscaleAsync(
-    ConfigureTimeseriesPartial,
-    MetadataPartial,
-    AsyncSeriesDataPartial,
-    AsyncSymbolsPartial,
-):
+class PsyscaleAsync(TimeseriesAsyncPartial, AsyncSymbolsPartial):
     """
     Asynchronous client interface for connecting to a PostgreSQL + TimescaleDB Database.
 

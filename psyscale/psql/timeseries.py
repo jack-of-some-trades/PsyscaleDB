@@ -5,7 +5,7 @@ from typing import Literal, Optional, get_args
 from pandas import Timedelta, Timestamp
 from psycopg import sql
 
-from .orm import AssetTable
+from .orm import AssetTable, MetadataInfo
 from .enum import SeriesTbls, AssetTbls, Schema
 from .generic import Filter, where, limit, arg_list, order
 
@@ -565,32 +565,31 @@ def select_aggregates(
 
 
 def select_aggregates_copy(
-    schema: Schema,
-    table: AssetTable,
-    pkey: int,
+    mdata: MetadataInfo,
     rth: bool,
     start: Optional[Timestamp],
     end: Optional[Timestamp],
     _limit: Optional[int],
     rtn_args: set[str],
 ) -> sql.Composed:
+    assert mdata.table
 
-    _filters: list[Filter] = [("pkey", "=", pkey)]
+    _filters: list[Filter] = [("pkey", "=", mdata.pkey)]
     if start is not None:
         _filters.append(("dt", ">=", start))
     if end is not None:
         _filters.append(("dt", "<", end))
 
     # Filter by rth if accessing a table that has both rth and eth
-    if rth and table.ext and table.rth is None:
+    if rth and mdata.table.has_rth:
         _filters.append(("rth", "=", 0))
 
-    if "rth" in rtn_args and table.ext and table.rth is True:
+    if "rth" in rtn_args and not mdata.table.has_rth:
         # 'rth' Doesn't exist in the table we are selecting from.
         rtn_args.remove("rth")
 
     rtn_args -= {"dt"}  # dt already ensured as a return
-    if table.period == Timedelta(0):
+    if mdata.table.period == Timedelta(0):
         dt_arg = "dt"
         _ordered_rtn_args = [v for v in get_args(TickArgs) if v in rtn_args]
     else:
@@ -605,8 +604,8 @@ def select_aggregates_copy(
         ) TO STDOUT WITH CSV HEADER;
     """
     ).format(
-        schema_name=sql.Identifier(schema),
-        table_name=sql.Identifier(str(table)),
+        schema_name=sql.Identifier(mdata.schema_name),
+        table_name=sql.Identifier(str(mdata.table)),
         rtn_args=arg_list(_ordered_rtn_args),
         filter=where(_filters),
         order=order("dt", True),
@@ -672,32 +671,31 @@ def calculate_aggregates(
 
 
 def calculate_aggregates_copy(
-    schema: Schema,
-    src_table: AssetTable,
+    mdata: MetadataInfo,
     timeframe: Timedelta,
-    pkey: int,
     rth: bool,
     start: Optional[Timestamp],
     end: Optional[Timestamp],
     _limit: Optional[int],
     rtn_args: set[str],
 ) -> sql.Composed:
+    assert mdata.table
 
-    _filters: list[Filter] = [("pkey", "=", pkey)]
+    _filters: list[Filter] = [("pkey", "=", mdata.pkey)]
     if start is not None:
         _filters.append(("dt", ">=", start))
     if end is not None:
         _filters.append(("dt", "<", end))
 
-    if src_table.has_rth and rth:
+    if mdata.table.has_rth and rth:
         # Filter by rth if accessing a table that has both rth and eth
         _filters.append(("rth", "=", 0))
-    if not src_table.has_rth and "rth" in rtn_args:
+    if not mdata.table.has_rth and "rth" in rtn_args:
         # 'rth' Doesn't exist in the table we are selecting from.
         rtn_args.remove("rth")
 
     rtn_args -= {"dt"}  # dt is Guaranteed to be returned
-    if src_table.period == Timedelta(0):
+    if mdata.timeframe == Timedelta(0):
         _inner_sel_args = _tick_inner_select_args(rtn_args)
     else:
         _inner_sel_args = _agg_inner_select_args(rtn_args)
@@ -712,9 +710,11 @@ def calculate_aggregates_copy(
         ) TO STDOUT WITH CSV HEADER;
         """
     ).format(
-        schema=sql.Identifier(schema),
-        table_name=sql.Identifier(repr(src_table)),
-        origin_select=_select_origin(schema, src_table.asset_class, rth, timeframe),
+        schema=sql.Identifier(mdata.schema_name),
+        table_name=sql.Identifier(repr(mdata.table)),
+        origin_select=_select_origin(
+            mdata.schema_name, mdata.table.asset_class, rth, timeframe
+        ),
         interval=sql.Literal(str(int(timeframe.total_seconds())) + " seconds"),
         inner_select_args=sql.SQL(", ").join(_inner_sel_args),
         filters=where(_filters),

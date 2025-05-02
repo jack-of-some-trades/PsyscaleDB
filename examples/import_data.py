@@ -134,7 +134,7 @@ def _import_alpaca(db: PsyscaleDB, on_conflict: Literal["error", "update"]):
         )
 
         # Fetch All the Metadata for the Symbol showing what data needs to be fetched
-        metadata_list = db.symbol_metadata(symbol["pkey"], _all=True)
+        metadata_list = db.stored_metadata(symbol["pkey"], _all=True)
         log.debug("Metadata List: %s", metadata_list)
 
         for metadata in metadata_list:

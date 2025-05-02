@@ -89,11 +89,11 @@ async def test_01_metadata_fetch(psyscale_async: PsyscaleAsync):
     aapl_pkey = aapl["pkey"]
 
     # No Data inserted yet, MetaData should be empty, No Async Metadata function
-    metadata = psyscale_async.symbol_metadata(aapl_pkey)
+    metadata = psyscale_async.stored_metadata(aapl_pkey)
     assert len(metadata) == 0
 
     # Should show that we need to store data in the Minute table of minute schema
-    metadata = psyscale_async.symbol_metadata(aapl_pkey, _all=True)
+    metadata = psyscale_async.stored_metadata(aapl_pkey, _all=True)
     assert len(metadata) == 1
     metadata = metadata[0]
 
@@ -109,7 +109,7 @@ async def test_02_aggregate_data_insert(
 ):
     # pkey and metadata fetch already asserted working in first test.
     aapl = (await psyscale_async.search_symbols_async({"store_minute": True}))[0]
-    metadata = psyscale_async.symbol_metadata(aapl["pkey"], _all=True)[0]
+    metadata = psyscale_async.stored_metadata(aapl["pkey"], _all=True)[0]
 
     with pytest.raises(ValueError):
         # Should error since a 'rth' column is needed but not given.
@@ -149,7 +149,7 @@ async def test_02_aggregate_data_insert(
     assert not hasattr(psyscale_async, "_altered_tables_mdata")
 
     # check what's available
-    metadata = psyscale_async.symbol_metadata(aapl["pkey"])
+    metadata = psyscale_async.stored_metadata(aapl["pkey"])
     assert len(metadata) == 4  # One for inserted data, 3 more for the aggregates
 
 
@@ -158,7 +158,7 @@ async def test_03_check_inserted_data(psyscale_async: PsyscaleAsync):
     aapl = (await psyscale_async.search_symbols_async({"store_minute": True}))[0]
 
     # check what's available
-    metadata = psyscale_async.symbol_metadata(aapl["pkey"])
+    metadata = psyscale_async.stored_metadata(aapl["pkey"])
     assert len(metadata) == 4  # One for inserted data, 3 more for the aggregates
 
     minute_metadata = [m for m in metadata if m.timeframe == pd.Timedelta("1min")][0]
@@ -176,8 +176,7 @@ async def test_03_check_inserted_data(psyscale_async: PsyscaleAsync):
         pd.Timedelta("1min"),
         rth=False,
         rtn_args={"open", "high", "low", "close", "volume", "rth"},
-        asset_class=aapl["asset_class"],
-        schema=minute_metadata.schema_name,
+        mdata=minute_metadata,
     )
     assert inserted_data is not None
 
