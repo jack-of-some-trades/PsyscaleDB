@@ -10,6 +10,8 @@
 *.cpython-312.pyc
 *.cpython-313.pyc
 __pycache__
+build
+dist
 .pytest_cache
 
 # Development Testing Code #
