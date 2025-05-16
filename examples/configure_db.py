@@ -37,8 +37,8 @@ STD_MINUTE_CONFIG = TimeseriesConfig(
         "us_fund": Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"us_stock": True, "us_fund": True},
-    aggregate_periods={"default": DEFAULT_AGGREGATES},
-    inserted_aggregate_periods={"default": [Timedelta("1m")]},
+    calculated_periods={"default": DEFAULT_AGGREGATES},
+    stored_periods={"default": [Timedelta("1m")]},
 )
 
 
@@ -62,8 +62,8 @@ STD_TICK_CONFIG = TimeseriesConfig(
         "us_fund": Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"us_stock": True, "us_fund": True},
-    aggregate_periods={"default": STD_TICK_PERIODS},
-    inserted_aggregate_periods={"default": []},
+    calculated_periods={"default": STD_TICK_PERIODS},
+    stored_periods={"default": []},
 )
 
 # Aggregate Schema only imports aggregate data. Useful when Higher Timeframe
@@ -79,8 +79,8 @@ STD_AGGREGATE_CONFIG = TimeseriesConfig(
         "us_fund": Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"us_stock": True, "us_fund": True},
-    aggregate_periods={"default": []},
-    inserted_aggregate_periods={"default": [Timedelta("1m")] + DEFAULT_AGGREGATES},
+    calculated_periods={"default": []},
+    stored_periods={"default": [Timedelta("1m")] + DEFAULT_AGGREGATES},
 )
 
 # endregion

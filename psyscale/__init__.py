@@ -9,6 +9,7 @@ import sys
 from typing import Literal
 
 
+from .psql import AssetTable, TimeseriesConfig, MetadataInfo
 from .core import PsyscaleConnectParams
 from .symbols_partial import AsyncSymbolsPartial, SymbolsPartial
 from .timeseries_partial import TimerseriesPartial, TimeseriesAsyncPartial
@@ -36,6 +37,9 @@ __all__ = (
     "PsyscaleAsync",
     "PsyscaleConnectParams",
     "set_psyscale_log_level",
+    "AssetTable",
+    "TimeseriesConfig",
+    "MetadataInfo",
 )
 
 

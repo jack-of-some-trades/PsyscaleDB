@@ -290,13 +290,13 @@ class TimeseriesConfig:
         * Optional, If None is given then the 2000/01/01 00:00:00 UTC is Assumed.
         * 'default' can be passed as a key to override stated default parameter.
 
-    - aggregate_periods: Dict[Asset_type:str, List[pd.Timedelta]]
+    - calculated_periods: Dict[Asset_type:str, List[pd.Timedelta]]
         : The Aggregate Periods that should be calculated and stored.
         * The Minimum value is 1 second for Tick Data, and 2 Minutes for Minute Data
         * The Default Aggregates are [5min, 15min, 30min, 1h, 4h, 1D, 1W]
         * 'default' can be passed as a key to override stated default parameter.
 
-    - aggregate_periods: Dict[Asset_type:str, List[pd.Timedelta]]
+    - stored_periods: Dict[Asset_type:str, List[pd.Timedelta]]
         : The Aggregate Periods that should will be inserted from an API and Joined on retrieval.
         * There are no Default Inserted Aggregate
         * 'default' can be passed as a key to override stated default parameter.
@@ -318,10 +318,8 @@ class TimeseriesConfig:
     eth_origins: dict[str, Timestamp | None] = field(default_factory=dict)
     htf_origins: dict[str, Timestamp | None] = field(default_factory=dict)
     prioritize_rth: dict[str, bool | None] = field(default_factory=dict)
-    aggregate_periods: dict[str, list[Timedelta] | None] = field(default_factory=dict)
-    inserted_aggregate_periods: dict[str, list[Timedelta] | None] = field(
-        default_factory=dict
-    )
+    calculated_periods: dict[str, list[Timedelta] | None] = field(default_factory=dict)
+    stored_periods: dict[str, list[Timedelta] | None] = field(default_factory=dict)
 
     def __post_init__(self):
         # Get all the desired Defaults from the given input
@@ -336,18 +334,18 @@ class TimeseriesConfig:
             self.htf_origins, "default", DEFAULT_HTF_ORIGIN_DATE
         )
         _default_aggs = _get_ensured(
-            self.aggregate_periods, "default", DEFAULT_AGGREGATES
+            self.calculated_periods, "default", DEFAULT_AGGREGATES
         )
 
-        _default_raw_aggs = _get_ensured(self.inserted_aggregate_periods, "default", [])
+        _default_raw_aggs = _get_ensured(self.stored_periods, "default", [])
         _default_priority = self.prioritize_rth.get("default", True)
 
         for asset_class in self.asset_classes:
             asset_aggregates = _get_ensured(
-                self.aggregate_periods, asset_class, _default_aggs
+                self.calculated_periods, asset_class, _default_aggs
             )
             inserted_aggregates = _get_ensured(
-                self.inserted_aggregate_periods, asset_class, _default_raw_aggs
+                self.stored_periods, asset_class, _default_raw_aggs
             )
 
             # Error check to Ensure no overlapping aggregate and inserted timeframes
@@ -668,7 +666,7 @@ class TimeseriesConfig:
             cls_inst._inserted_tables[asset_class] = [
                 table for table in cls_tables if table.raw
             ]
-            cls_inst.inserted_aggregate_periods[asset_class] = [
+            cls_inst.stored_periods[asset_class] = [
                 table.period for table in cls_inst._inserted_tables[asset_class]
             ]
 
@@ -684,7 +682,7 @@ class TimeseriesConfig:
             cls_inst._eth_tables[asset_class] = [
                 table for table in cls_tables if table.rth is False
             ]
-            cls_inst.aggregate_periods[asset_class] = [
+            cls_inst.calculated_periods[asset_class] = [
                 table.period for table in cls_tables
             ]
 

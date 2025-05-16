@@ -1,7 +1,6 @@
 "Psyscale Partial Class to add Timeseries Schema Configuration script"
 
 from abc import abstractmethod
-from enum import StrEnum
 import logging
 from typing import Any, Dict, Iterable, Literal, Optional, get_args
 from itertools import chain

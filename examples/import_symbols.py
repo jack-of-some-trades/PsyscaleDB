@@ -28,11 +28,15 @@ def _import_alpaca(db: PsyscaleDB, on_conflict: Literal["ignore", "update"]):
     Inserts securities from alpaca separating them into asset_classes US_Stock, US_Fund, & Crypto
     Updates are not dynamic, they're forced when a Symbol & Exchange pair are already in the table.
 
-    Currently this will always insert unique (Symbol, Exchange) pairs. This leads to ab edge case bug.
+    Currently this will always insert unique (Symbol, Exchange) pairs. This leads to an edge case bug.
     If either of these parameters update than a new pkey will be made when in practice the value needs
     to be updated. This could be fixed by ensuring a unique ID or CUSID that is located within the
     attrs column for Alpaca Symbols.
     """
+    # The AlpacaAPI loads the following environment variables in order to run.
+    # ALPACA_API_URL = "https://paper-api.alpaca.markets"
+    # ALPACA_API_KEY = ""
+    # ALPACA_API_SECRET_KEY = ""
     alpaca_api = AlpacaAPI()
 
     filtered_assets = alpaca_api.assets[

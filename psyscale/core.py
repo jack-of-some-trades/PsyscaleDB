@@ -67,6 +67,7 @@ class PsyscaleConnectParams:
     sslmode: Optional[str] = None
     application_name: Optional[str] = None
     volume_path: Optional[str] = None
+    env_init: bool = field(default=False, init=False)
     url: str = field(init=False)
 
     @property
@@ -132,6 +133,8 @@ class PsyscaleConnectParams:
                 sslmode=os.getenv("PSYSCALE_SSLMODE"),
                 application_name=os.getenv("PSYSCALE_APP_NAME"),
             )
+            # Only works when variables are already individually addressable.
+            inst.env_init = True
 
         if inst.is_local:
             # Get additional params if using a local database
@@ -203,7 +206,7 @@ class PsyscaleCore:
             self._pool.open(timeout=_timeout)
             log.debug("Health_check: %s", "good" if self._health_check() else "bad")
         except PoolTimeout as e:
-            if not conn_params.is_local:
+            if not (conn_params.is_local and conn_params.env_init):
                 raise e
 
             # Try and start the local database, give extra buffer on the timeout.

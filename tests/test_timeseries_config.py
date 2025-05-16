@@ -24,8 +24,8 @@ TEST_CONFIG = TimeseriesConfig(
         "us_fund": Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"us_stock": True, "us_fund": None},
-    aggregate_periods={"default": DEFAULT_AGGREGATES, "crypto": CRYPTO_AGGS},
-    inserted_aggregate_periods={
+    calculated_periods={"default": DEFAULT_AGGREGATES, "crypto": CRYPTO_AGGS},
+    stored_periods={
         "default": [Timedelta("15s"), Timedelta("30s"), Timedelta("1m")],
         "crypto": [Timedelta("1m")],
     },
@@ -40,8 +40,8 @@ def test_for_errors():
     with pytest.raises(AttributeError):
         TimeseriesConfig(
             asset_classes=["stocks"],
-            aggregate_periods={"stocks": [Timedelta(days=1)]},
-            inserted_aggregate_periods={"stocks": [Timedelta(days=1)]},
+            calculated_periods={"stocks": [Timedelta(days=1)]},
+            stored_periods={"stocks": [Timedelta(days=1)]},
             rth_origins={},
             eth_origins={},
             htf_origins={},
@@ -448,8 +448,10 @@ MINUTE_CONFIG = TimeseriesConfig(
         "equity": Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"equity": True},
-    aggregate_periods={"default": [Timedelta("5m"), Timedelta("30m"), Timedelta("1h")]},
-    inserted_aggregate_periods={"default": [Timedelta("1m")]},
+    calculated_periods={
+        "default": [Timedelta("5m"), Timedelta("30m"), Timedelta("1h")]
+    },
+    stored_periods={"default": [Timedelta("1m")]},
 )
 
 
