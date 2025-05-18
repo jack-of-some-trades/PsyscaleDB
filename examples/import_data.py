@@ -33,9 +33,76 @@ def main():
     on_conflict: Literal["error", "update"] = "update"
     db = PsyscaleDB()
 
-    _update_stored_symbols(db)
+    # _update_stored_symbols(db)
     _import_alpaca(db, on_conflict)
     db.refresh_aggregate_metadata()
+
+
+def _import_alpaca(db: PsyscaleDB, on_conflict: Literal["error", "update"]):
+    "Select all the Stored Symbols from Alpaca and fetch & store their most recent data"
+
+    # The AlpacaAPI Loads the following Environment variables in order to run.
+    # ALPACA_API_URL = "https://paper-api.alpaca.markets"
+    # ALPACA_API_KEY = ""
+    # ALPACA_API_SECRET_KEY = ""
+    alpaca_api = AlpacaAPI()
+
+    # Fetch all the Symbols that need to fetch data from Alpaca
+    symbols = db.search_symbols(
+        {
+            "source": "Alpaca",
+            "store": True,
+        },
+        return_attrs=True,
+        limit=None,
+    )
+
+    for symbol in symbols:
+        log.info(
+            "Fetching Data for '%s':'%s':'%s'",
+            symbol["symbol"],
+            symbol["exchange"],
+            symbol["source"],
+        )
+
+        # Fetch All the Metadata for the Symbol showing what data needs to be fetched
+        metadata_list = db.stored_metadata(symbol["pkey"], _all=True)
+        log.debug("Metadata List: %s", metadata_list)
+
+        for metadata in metadata_list:
+            if not getattr(metadata.table, "raw"):
+                continue  # Table must be a raw table to insert data
+
+            log.info(
+                "Fetching Data @ Timeframe: '%s' from '%s' Forward ...",
+                str(metadata.timeframe),
+                metadata.end_date,
+            )
+
+            # Fetch the Data from Alpaca.. At an abysmally slow rate
+            t_start = time()
+            asset_class = "crypto" if symbol["asset_class"] == "crypto" else "us_equity"
+            data = alpaca_api.get_hist(
+                symbol["symbol"],
+                asset_class,
+                metadata.timeframe,
+                start=metadata.end_date,
+            )
+            log.debug("Data Fetch Time = %s", time() - t_start)
+            if data is None:
+                log.error("Could not retrieve any data for symbol : %s", symbol)
+                continue
+
+            # Pass the data off to the database to be inserted
+            t_start = time()
+            db.upsert_series(
+                symbol["pkey"],
+                metadata,
+                data,
+                symbol["exchange"],
+                on_conflict=on_conflict,
+            )
+            log.debug("Data Insert Time = %s", time() - t_start)
 
 
 def _update_stored_symbols(db: PsyscaleDB):
@@ -109,68 +176,6 @@ def _update_stored_symbols(db: PsyscaleDB):
                     db.update_symbol(symbol["pkey"], {store: True})
                 else:
                     log.info("Skipping Symbol")
-
-
-def _import_alpaca(db: PsyscaleDB, on_conflict: Literal["error", "update"]):
-    "Select all the Stored Symbols from Alpaca and fetch & store their most recent data"
-    alpaca_api = AlpacaAPI()
-
-    # Fetch all the Symbols that need to fetch data from Alpaca
-    symbols = db.search_symbols(
-        {
-            "source": "Alpaca",
-            "store": True,
-        },
-        return_attrs=True,
-        limit=None,
-    )
-
-    for symbol in symbols:
-        log.info(
-            "Fetching Data for '%s':'%s':'%s'",
-            symbol["symbol"],
-            symbol["exchange"],
-            symbol["source"],
-        )
-
-        # Fetch All the Metadata for the Symbol showing what data needs to be fetched
-        metadata_list = db.stored_metadata(symbol["pkey"], _all=True)
-        log.debug("Metadata List: %s", metadata_list)
-
-        for metadata in metadata_list:
-            if not getattr(metadata.table, "raw"):
-                continue  # Table must be a raw table to insert data
-
-            log.info(
-                "Fetching Data @ Timeframe: '%s' from '%s' Forward ...",
-                str(metadata.timeframe),
-                metadata.end_date,
-            )
-
-            # Fetch the Data from Alpaca.. At an abysmally slow rate
-            t_start = time()
-            asset_class = "crypto" if symbol["asset_class"] == "crypto" else "us_equity"
-            data = alpaca_api.get_hist(
-                symbol["symbol"],
-                asset_class,
-                metadata.timeframe,
-                start=metadata.end_date,
-            )
-            log.debug("Data Fetch Time = %s", time() - t_start)
-            if data is None:
-                log.error("Could not retrieve any data for symbol : %s", symbol)
-                continue
-
-            # Pass the data off to the database to be inserted
-            t_start = time()
-            db.upsert_series(
-                symbol["pkey"],
-                metadata,
-                data,
-                symbol["exchange"],
-                on_conflict=on_conflict,
-            )
-            log.debug("Data Insert Time = %s", time() - t_start)
 
 
 if __name__ == "__main__":
