@@ -54,6 +54,21 @@ LOCAL_POOL_GEN_TIMEOUT = 0.2  # wait time when starting a local Connection Pool
 DictCursor: TypeAlias = pg.Cursor[pg_rows.DictRow]
 TupleCursor: TypeAlias = pg.Cursor[pg_rows.TupleRow]
 
+BASE_ENV_VARS = [
+    "PSYSCALE_HOST",
+    "PSYSCALE_PORT",
+    "PSYSCALE_USER",
+    "PSYSCALE_DB_NAME",
+    "PSYSCALE_PASSWORD",
+]
+YML_ENV_VARS = [
+    "PSYSCALE_PORT",
+    "PSYSCALE_USER",
+    "PSYSCALE_DB_NAME",
+    "PSYSCALE_PASSWORD",
+    "PSYSCALE_VOLUME_PATH",
+]
+
 
 @dataclass
 class PsyscaleConnectParams:
@@ -123,18 +138,23 @@ class PsyscaleConnectParams:
         """
         if url := os.getenv("PSYSCALE_URL"):
             inst = cls.from_url(url)
-        else:
+        elif any(map(os.getenv, BASE_ENV_VARS)):
+            # Ensure at least one ENV was given before supplying defaults
             inst = cls(
                 host=os.getenv("PSYSCALE_HOST") or "localhost",
                 port=int(os.getenv("PSYSCALE_PORT") or 5432),
-                user=os.getenv("PSYSCALE_USER") or "",
-                database=os.getenv("PSYSCALE_DB_NAME") or "",
-                password=os.getenv("PSYSCALE_PASSWORD") or "",
+                user=os.getenv("PSYSCALE_USER") or "postgres",
+                database=os.getenv("PSYSCALE_DB_NAME") or "postgres",
+                password=os.getenv("PSYSCALE_PASSWORD") or "password",
                 sslmode=os.getenv("PSYSCALE_SSLMODE"),
                 application_name=os.getenv("PSYSCALE_APP_NAME"),
             )
-            # Only works when variables are already individually addressable.
-            inst.env_init = True
+            # Can only docker_compose yml init when all these vars are present
+            inst.env_init = all(map(os.getenv, YML_ENV_VARS))
+        else:
+            raise AttributeError(
+                "Cannot Initialize PsyscaleDB from ENV. No Env variables given."
+            )
 
         if inst.is_local:
             # Get additional params if using a local database
