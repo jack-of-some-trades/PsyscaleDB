@@ -43,9 +43,7 @@ def test_asset_table_properties():
     assert at.has_rth is True
     assert AssetTable("etf", Timedelta("3d"), raw=True, ext=True, rth=False).has_rth
     assert not AssetTable("etf", Timedelta("3d"), raw=False, ext=True, rth=True).has_rth
-    assert not AssetTable(
-        "etf", Timedelta("3d"), raw=False, ext=False, rth=None
-    ).has_rth
+    assert not AssetTable("etf", Timedelta("3d"), raw=False, ext=False, rth=None).has_rth
 
 
 def test_asset_table_from_table_name():

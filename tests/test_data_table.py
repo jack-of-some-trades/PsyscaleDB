@@ -34,9 +34,7 @@ MINUTE_CONFIG = TimeseriesConfig(
         "equity": pd.Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"equity": True},
-    calculated_periods={
-        "default": [pd.Timedelta("5m"), pd.Timedelta("30m"), pd.Timedelta("1h")]
-    },
+    calculated_periods={"default": [pd.Timedelta("5m"), pd.Timedelta("30m"), pd.Timedelta("1h")]},
     stored_periods={"default": [pd.Timedelta("1m")]},
 )
 
@@ -127,9 +125,7 @@ def test_02_aggregate_data_insert(psyscale_db: PsyscaleDB, caplog, AAPL_MIN_DATA
 
     with pytest.raises(AttributeError):
         # Should error since a column is missing
-        psyscale_db.upsert_series(
-            aapl["pkey"], metadata, AAPL_MIN_DATA.drop(columns="date"), None
-        )
+        psyscale_db.upsert_series(aapl["pkey"], metadata, AAPL_MIN_DATA.drop(columns="date"), None)
 
     # These inter trackers should not yet be populated
     assert not hasattr(psyscale_db, "_altered_tables")
@@ -174,9 +170,7 @@ def test_03_check_inserted_data(psyscale_db: PsyscaleDB, caplog):
 
     # check that the full dataset got inserted
     raw_data = Series_DF(pd.read_csv("example_data/AAPL_1min.csv"), "NYSE")
-    raw_data.df.drop(
-        columns=set(raw_data.columns).difference(AGGREGATE_ARGS), inplace=True
-    )
+    raw_data.df.drop(columns=set(raw_data.columns).difference(AGGREGATE_ARGS), inplace=True)
     raw_data.df.set_index(keys=pd.RangeIndex(0, 2083), inplace=True)
     raw_data.df["rth"] = raw_data.df["rth"].astype("int64")
 
@@ -233,18 +227,12 @@ def test_04_upsert_on_conflict_states(psyscale_db: PsyscaleDB, AAPL_MIN_DATA, ca
     alt_data.loc[0, "volume"] = -1
 
     with pytest.raises(DatabaseError):
-        psyscale_db.upsert_series(
-            aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="error"
-        )
+        psyscale_db.upsert_series(aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="error")
 
     with caplog.at_level("WARNING"):
-        psyscale_db.upsert_series(
-            aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="ignore"
-        )
+        psyscale_db.upsert_series(aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="ignore")
     assert any(r.levelname == "WARNING" for r in caplog.records)
-    stored_data = psyscale_db.get_series(
-        aapl["pkey"], pd.Timedelta("1min"), rth=False, limit=10
-    )
+    stored_data = psyscale_db.get_series(aapl["pkey"], pd.Timedelta("1min"), rth=False, limit=10)
     assert stored_data is not None
 
     assert stored_data["dt"].iloc[0] == alt_data["dt"].iloc[0]
@@ -254,21 +242,15 @@ def test_04_upsert_on_conflict_states(psyscale_db: PsyscaleDB, AAPL_MIN_DATA, ca
     assert stored_data.iloc[0]["close"] != alt_data.iloc[0]["close"]
     assert stored_data.iloc[0]["volume"] != alt_data.iloc[0]["volume"]
 
-    psyscale_db.upsert_series(
-        aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="update"
-    )
-    stored_data = psyscale_db.get_series(
-        aapl["pkey"], pd.Timedelta("1min"), rth=False, limit=10
-    )
+    psyscale_db.upsert_series(aapl["pkey"], metadata, alt_data, "NYSE", on_conflict="update")
+    stored_data = psyscale_db.get_series(aapl["pkey"], pd.Timedelta("1min"), rth=False, limit=10)
     assert stored_data is not None
 
     assert stored_data["dt"].iloc[0] == alt_data["dt"].iloc[0]
     assert_series_equal(stored_data.iloc[0], alt_data.iloc[0])
 
     # Re-insert & clean the original data for use in following tests
-    psyscale_db.upsert_series(
-        aapl["pkey"], metadata, AAPL_MIN_DATA.iloc[0:10], "NYSE", on_conflict="update"
-    )
+    psyscale_db.upsert_series(aapl["pkey"], metadata, AAPL_MIN_DATA.iloc[0:10], "NYSE", on_conflict="update")
     psyscale_db.refresh_aggregate_metadata()
 
 
@@ -353,9 +335,7 @@ def test_07_tick_data_insert(psyscale_db: PsyscaleDB, caplog, TICK_DATA):
 
     with pytest.raises(AttributeError):
         # Should error since a column is missing
-        psyscale_db.upsert_series(
-            goog["pkey"], metadata, TICK_DATA.drop(columns="time"), None
-        )
+        psyscale_db.upsert_series(goog["pkey"], metadata, TICK_DATA.drop(columns="time"), None)
 
     # These inter trackers should not yet be populated
     assert not hasattr(psyscale_db, "_altered_tables")
@@ -397,9 +377,7 @@ def test_08_check_inserted_tick_data(psyscale_db: PsyscaleDB):
 
     # check that the full dataset got inserted
     raw_data = Series_DF(pd.read_csv("example_data/example_ticks.csv"), "NYSE")
-    raw_data.df.drop(
-        columns=set(raw_data.columns).difference(AGGREGATE_ARGS), inplace=True
-    )
+    raw_data.df.drop(columns=set(raw_data.columns).difference(AGGREGATE_ARGS), inplace=True)
     raw_data.df.set_index(keys=pd.RangeIndex(0, 2465), inplace=True)
     raw_data.df["rth"] = raw_data.df["rth"].astype("int64")
 

@@ -48,9 +48,7 @@ def select_origin(
 
 
 def _select_all_origins(schema: str) -> sql.Composed:
-    return sql.SQL(
-        "SELECT (asset_class, origin_rth, origin_eth, origin_htf) FROM {schema_name}.{table_name};"
-    ).format(
+    return sql.SQL("SELECT (asset_class, origin_rth, origin_eth, origin_htf) FROM {schema_name}.{table_name};").format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(SeriesTbls._ORIGIN),
     )
@@ -62,14 +60,8 @@ def _select_origin(
     rth: bool | None = None,
     period: Timedelta = Timedelta(-1),
 ) -> sql.Composed:
-    origin = (
-        "origin_htf"
-        if period >= Timedelta("4W")
-        else "origin_rth" if rth else "origin_eth"
-    )
-    return sql.SQL(
-        "SELECT {origin} FROM {schema_name}.{table_name} WHERE asset_class = {asset_class}"
-    ).format(
+    origin = "origin_htf" if period >= Timedelta("4W") else "origin_rth" if rth else "origin_eth"
+    return sql.SQL("SELECT {origin} FROM {schema_name}.{table_name} WHERE asset_class = {asset_class}").format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(SeriesTbls._ORIGIN),
         origin=sql.Identifier(origin),
@@ -123,9 +115,7 @@ def update_origin(
 
 
 def delete_origin(schema: str, asset_class: str) -> sql.Composed:
-    return sql.SQL(
-        "DELETE FROM {schema_name}.{table_name} WHERE asset_class = {asset_class};"
-    ).format(
+    return sql.SQL("DELETE FROM {schema_name}.{table_name} WHERE asset_class = {asset_class};").format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(SeriesTbls._ORIGIN),
         asset_class=sql.Literal(asset_class),
@@ -175,9 +165,7 @@ def create_tick_table(schema: str, table: AssetTable) -> sql.Composed:
     )
 
 
-def create_continuous_tick_aggregate(
-    schema: str, table: AssetTable, ref_table: AssetTable
-) -> sql.Composed:
+def create_continuous_tick_aggregate(schema: str, table: AssetTable, ref_table: AssetTable) -> sql.Composed:
     "Create the inital continuous aggregate from a tick table."
     _error_check_continuous_aggrigate(table, ref_table)
     return sql.SQL(
@@ -197,11 +185,7 @@ def create_continuous_tick_aggregate(
             count(*) AS ticks
         FROM {schema_name}.{ref_table_name}"""
         # Where clause handles the case when going from a table with an rth column to no rth column
-        + (
-            " WHERE rth = 0 "
-            if ref_table.rth is None and table.ext and table.rth
-            else ""
-        )
+        + (" WHERE rth = 0 " if ref_table.rth is None and table.ext and table.rth else "")
         + """
         GROUP BY pkey, 1 ORDER BY 1
         WITH NO DATA;
@@ -241,12 +225,8 @@ def refresh_continuous_aggregate(
     schema: str, table: AssetTable, start: Optional[Timestamp], end: Optional[Timestamp]
 ) -> sql.Composed:
     if table.raw:
-        raise AttributeError(
-            f"Cannot Refresh Table {schema}.{table}. It is not a Continuous Aggregate."
-        )
-    return sql.SQL(
-        "CALL refresh_continuous_aggregate({full_name}, {start}, {end});"
-    ).format(
+        raise AttributeError(f"Cannot Refresh Table {schema}.{table}. It is not a Continuous Aggregate.")
+    return sql.SQL("CALL refresh_continuous_aggregate({full_name}, {start}, {end});").format(
         full_name=sql.Literal(schema + "." + repr(table)),
         start=sql.Literal(start),  # Automatically handles type conversion & Null Case
         end=sql.Literal(end),
@@ -334,9 +314,7 @@ def upsert_copied_ticks(schema: str, table: AssetTable, pkey: int) -> sql.Compos
 
 # region -------- -------- -------- Aggrigate Timeseries Commands -------- -------- --------
 
-AggregateArgs = Literal[
-    "dt", "rth", "open", "high", "low", "close", "volume", "vwap", "ticks"
-]
+AggregateArgs = Literal["dt", "rth", "open", "high", "low", "close", "volume", "vwap", "ticks"]
 AGGREGATE_ARGS = set(v for v in get_args(AggregateArgs))
 
 
@@ -371,9 +349,7 @@ def create_raw_aggregate_table(schema: str, table: AssetTable) -> sql.Composed:
     )
 
 
-def create_continuous_aggrigate(
-    schema: str, table: AssetTable, ref_table: AssetTable
-) -> sql.Composed:
+def create_continuous_aggrigate(schema: str, table: AssetTable, ref_table: AssetTable) -> sql.Composed:
     "Create a Higher-Timeframe Aggregate from an OHLC Dataset"
     _error_check_continuous_aggrigate(table, ref_table)
     return sql.SQL(
@@ -393,11 +369,7 @@ def create_continuous_aggrigate(
             sum(ticks) AS ticks
         FROM {schema_name}.{ref_table_name}"""
         # Where clause handles the case when going from a table with an rth column to no rth column
-        + (
-            " WHERE rth = 0 "
-            if ref_table.rth is None and table.ext and table.rth
-            else ""
-        )
+        + (" WHERE rth = 0 " if ref_table.rth is None and table.ext and table.rth else "")
         # GROUP By 1 == Group by dt. Must use number since there is a name conflict on 'dt'
         # between source table and the selected table. Names must be Identical to chain aggregates.
         + """
@@ -507,9 +479,7 @@ def upsert_copied_aggregates(schema: str, table: AssetTable, pkey: int) -> sql.C
 
 
 def _array_select(column: str):
-    return sql.SQL("ARRAY( SELECT {col} FROM inner_select) AS {col}").format(
-        col=sql.Identifier(column)
-    )
+    return sql.SQL("ARRAY( SELECT {col} FROM inner_select) AS {col}").format(col=sql.Identifier(column))
 
 
 def select_aggregates(
@@ -558,9 +528,7 @@ def select_aggregates(
         filter=where(_filters),
         order=order("dt", True),
         limit=limit(_limit),
-        rtn_arrays=sql.SQL(",\n").join(
-            [_array_select(col) for col in _ordered_rtn_args]
-        ),
+        rtn_arrays=sql.SQL(",\n").join([_array_select(col) for col in _ordered_rtn_args]),
     )
 
 
@@ -664,9 +632,7 @@ def calculate_aggregates(
         inner_select_args=sql.SQL(", ").join(_inner_sel_args),
         filters=where(_filters),
         limit=limit(_limit),
-        rtn_arrays=sql.SQL(",\n").join(
-            [_array_select(col) for col in _ordered_rtn_args]
-        ),
+        rtn_arrays=sql.SQL(",\n").join([_array_select(col) for col in _ordered_rtn_args]),
     )
 
 
@@ -712,9 +678,7 @@ def calculate_aggregates_copy(
     ).format(
         schema=sql.Identifier(mdata.schema_name),
         table_name=sql.Identifier(repr(mdata.table)),
-        origin_select=_select_origin(
-            mdata.schema_name, mdata.table.asset_class, rth, timeframe
-        ),
+        origin_select=_select_origin(mdata.schema_name, mdata.table.asset_class, rth, timeframe),
         interval=sql.Literal(str(int(timeframe.total_seconds())) + " seconds"),
         inner_select_args=sql.SQL(", ").join(_inner_sel_args),
         filters=where(_filters),
@@ -739,9 +703,7 @@ def _agg_inner_select_args(args: set[str]) -> list[sql.Composable]:
     if "ticks" in args:
         inner_select_args.append(sql.SQL("sum(ticks) AS ticks"))
     if "vwap" in args:
-        inner_select_args.append(
-            sql.SQL("sum(vwap * volume) / NULLIF(SUM(volume), 0) AS vwap")
-        )
+        inner_select_args.append(sql.SQL("sum(vwap * volume) / NULLIF(SUM(volume), 0) AS vwap"))
     return inner_select_args
 
 
@@ -762,9 +724,7 @@ def _tick_inner_select_args(args: set[str]) -> list[sql.Composable]:
     if "ticks" in args:
         inner_select_args.append(sql.SQL("count(*) AS ticks"))
     if "vwap" in args:
-        inner_select_args.append(
-            sql.SQL("sum(price * volume) / NULLIF(SUM(volume), 0) AS vwap")
-        )
+        inner_select_args.append(sql.SQL("sum(price * volume) / NULLIF(SUM(volume), 0) AS vwap"))
     return inner_select_args
 
 

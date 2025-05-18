@@ -139,9 +139,7 @@ class AssetTable:
                 f" whole number of seconds. Given : {self.period}",
             )
 
-        self._table_name = (
-            self.asset_class + "_" + str(int(self.period.total_seconds()))
-        )
+        self._table_name = self.asset_class + "_" + str(int(self.period.total_seconds()))
 
         if self._origin_ltf is not None and self._origin_htf is None:
             # Normalize to midnight of the first of whatever month was given.
@@ -161,9 +159,7 @@ class AssetTable:
 
     def __eq__(self, other: Self) -> bool:
         if not isinstance(other, AssetTable):
-            raise NotImplementedError(
-                "Can only Compare between an AssetTable to an AssetTable"
-            )
+            raise NotImplementedError("Can only Compare between an AssetTable to an AssetTable")
         # Compares asset_class, period, raw, ext, and rth all in one check
         return self._table_name == other._table_name
 
@@ -188,11 +184,7 @@ class AssetTable:
         if self.period < Timedelta("4W"):
             return DEFAULT_ORIGIN_DATE if self._origin_ltf is None else self._origin_ltf
         else:
-            return (
-                self._origin_htf
-                if self._origin_htf is not None
-                else DEFAULT_HTF_ORIGIN_DATE
-            )
+            return self._origin_htf if self._origin_htf is not None else DEFAULT_HTF_ORIGIN_DATE
 
     @property
     def origin(self) -> str:
@@ -200,17 +192,11 @@ class AssetTable:
 
     @property
     def origin_ltf(self) -> str:
-        return str(
-            DEFAULT_ORIGIN_DATE if self._origin_ltf is None else self._origin_ltf
-        )
+        return str(DEFAULT_ORIGIN_DATE if self._origin_ltf is None else self._origin_ltf)
 
     @property
     def origin_htf(self) -> str:
-        return str(
-            self._origin_htf
-            if self._origin_htf is not None
-            else DEFAULT_HTF_ORIGIN_DATE
-        )
+        return str(self._origin_htf if self._origin_htf is not None else DEFAULT_HTF_ORIGIN_DATE)
 
     @property
     def psql_interval(self) -> str:
@@ -330,23 +316,15 @@ class TimeseriesConfig:
 
         _default_rth = _get_ensured(self.rth_origins, "default", DEFAULT_ORIGIN_DATE)
         _default_eth = _get_ensured(self.eth_origins, "default", _default_rth)
-        _default_htf = _get_ensured(
-            self.htf_origins, "default", DEFAULT_HTF_ORIGIN_DATE
-        )
-        _default_aggs = _get_ensured(
-            self.calculated_periods, "default", DEFAULT_AGGREGATES
-        )
+        _default_htf = _get_ensured(self.htf_origins, "default", DEFAULT_HTF_ORIGIN_DATE)
+        _default_aggs = _get_ensured(self.calculated_periods, "default", DEFAULT_AGGREGATES)
 
         _default_raw_aggs = _get_ensured(self.stored_periods, "default", [])
         _default_priority = self.prioritize_rth.get("default", True)
 
         for asset_class in self.asset_classes:
-            asset_aggregates = _get_ensured(
-                self.calculated_periods, asset_class, _default_aggs
-            )
-            inserted_aggregates = _get_ensured(
-                self.stored_periods, asset_class, _default_raw_aggs
-            )
+            asset_aggregates = _get_ensured(self.calculated_periods, asset_class, _default_aggs)
+            inserted_aggregates = _get_ensured(self.stored_periods, asset_class, _default_raw_aggs)
 
             # Error check to Ensure no overlapping aggregate and inserted timeframes
             # No fuckin way I'm managing that mess of trying to detect what tables need to be JOIN'd
@@ -381,12 +359,10 @@ class TimeseriesConfig:
                     "rth": None,
                 }
                 self._std_tables[asset_class] = [
-                    AssetTable(period=period, raw=False, **asset_args)
-                    for period in asset_aggregates
+                    AssetTable(period=period, raw=False, **asset_args) for period in asset_aggregates
                 ]
                 self._inserted_tables[asset_class] = [
-                    AssetTable(period=period, raw=True, **asset_args)
-                    for period in inserted_aggregates
+                    AssetTable(period=period, raw=True, **asset_args) for period in inserted_aggregates
                 ]
                 continue
 
@@ -400,20 +376,13 @@ class TimeseriesConfig:
             )
 
             # std_tables (that have an ext column) use eth_origin since it's earlier than rth_origin
-            self._std_tables[asset_class] = [
-                AssetTable(period=period, rth=None, **asset_args) for period in std
-            ]
-            self._eth_tables[asset_class] = [
-                AssetTable(period=period, rth=False, **asset_args)
-                for period in eth_only
-            ]
+            self._std_tables[asset_class] = [AssetTable(period=period, rth=None, **asset_args) for period in std]
+            self._eth_tables[asset_class] = [AssetTable(period=period, rth=False, **asset_args) for period in eth_only]
 
             # Union Operator Overrides existing keys
             asset_args |= {"_origin_ltf": asset_rth_origin}
 
-            self._rth_tables[asset_class] = [
-                AssetTable(period=period, rth=True, **asset_args) for period in rth_only
-            ]
+            self._rth_tables[asset_class] = [AssetTable(period=period, rth=True, **asset_args) for period in rth_only]
 
             asset_args |= {"raw": True}
 
@@ -438,9 +407,7 @@ class TimeseriesConfig:
                 if period in eth_only
             )
             self._inserted_tables[asset_class].extend(
-                AssetTable(period=period, rth=None, **asset_args)
-                for period in inserted_aggregates
-                if period in std
+                AssetTable(period=period, rth=None, **asset_args) for period in inserted_aggregates if period in std
             )
             # endregion
 
@@ -448,9 +415,7 @@ class TimeseriesConfig:
         # private_method, Assume Asset_class is known
         return self.eth_origins[asset_class] != self.rth_origins[asset_class]
 
-    def all_tables(
-        self, asset_class: str, *, include_raw: bool = True
-    ) -> List[AssetTable]:
+    def all_tables(self, asset_class: str, *, include_raw: bool = True) -> List[AssetTable]:
         if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
 
@@ -501,9 +466,7 @@ class TimeseriesConfig:
         else:
             return self._eth_tables[asset_class] + raws
 
-    def raw_tables(
-        self, asset_class: str, rth: Literal["all", "std", "rth", "eth"] = "all"
-    ) -> List[AssetTable]:
+    def raw_tables(self, asset_class: str, rth: Literal["all", "std", "rth", "eth"] = "all") -> List[AssetTable]:
         if asset_class not in self.asset_classes:
             raise KeyError(f"{asset_class = } is not a known asset type.")
         if asset_class not in self._inserted_tables:
@@ -512,21 +475,13 @@ class TimeseriesConfig:
         if rth == "all":
             return self._inserted_tables[asset_class]
         elif rth == "std":
-            return [
-                tbl for tbl in self._inserted_tables[asset_class] if tbl.rth is None
-            ]
+            return [tbl for tbl in self._inserted_tables[asset_class] if tbl.rth is None]
         elif rth == "rth":
-            return [
-                tbl for tbl in self._inserted_tables[asset_class] if tbl.rth is True
-            ]
+            return [tbl for tbl in self._inserted_tables[asset_class] if tbl.rth is True]
         else:
-            return [
-                tbl for tbl in self._inserted_tables[asset_class] if tbl.rth is False
-            ]
+            return [tbl for tbl in self._inserted_tables[asset_class] if tbl.rth is False]
 
-    def get_aggregation_source(
-        self, desired_table: AssetTable, rtn_self: bool = False
-    ) -> AssetTable:
+    def get_aggregation_source(self, desired_table: AssetTable, rtn_self: bool = False) -> AssetTable:
         """
         Given the desired AssetTable, return the most appropriate AssetTable to pull or derive
         the desired data from. When rtn_self == True this function can return the table passed
@@ -538,18 +493,13 @@ class TimeseriesConfig:
             tbls = self.raw_tables(desired_table.asset_class)
             divisor_tbls = [tbl for tbl in tbls if tbl.period == Timedelta(0)]
             if len(divisor_tbls) == 0:
-                raise AttributeError(
-                    "Requesting Tick Data from an Asset Class that has no Tick data"
-                )
+                raise AttributeError("Requesting Tick Data from an Asset Class that has no Tick data")
         else:
             tbls = self.all_tables(desired_table.asset_class)
 
             # All Tables that are an even period divider of what is desired
             divisor_tbls = [
-                tbl
-                for tbl in tbls
-                if tbl.period == Timedelta(0)
-                or desired_table.period % tbl.period == Timedelta(0)
+                tbl for tbl in tbls if tbl.period == Timedelta(0) or desired_table.period % tbl.period == Timedelta(0)
             ]
 
             if len(divisor_tbls) == 0:
@@ -574,15 +524,9 @@ class TimeseriesConfig:
         elif desired_table.rth is True:
             # rth == True aggregates to rth timeframe, rth == None / False aggregate to 'eth timeframe'
             # => When 'rth' True, we must aggregate from a raw table when 'ext' matters
-            ext_matches = [
-                tbl for tbl in divisor_tbls if tbl.rth or (tbl.raw and tbl.rth is None)
-            ]
+            ext_matches = [tbl for tbl in divisor_tbls if tbl.rth or (tbl.raw and tbl.rth is None)]
         else:
-            ext_matches = [
-                tbl
-                for tbl in divisor_tbls
-                if tbl.rth is None or tbl.rth == desired_table.rth
-            ]
+            ext_matches = [tbl for tbl in divisor_tbls if tbl.rth is None or tbl.rth == desired_table.rth]
 
         if len(ext_matches) == 0:
             raise AttributeError(
@@ -593,9 +537,7 @@ class TimeseriesConfig:
         ext_matches.sort(key=lambda x: x.period)
         return ext_matches[-1]
 
-    def get_selection_source_table(
-        self, desired_table: AssetTable
-    ) -> Tuple[AssetTable, bool]:
+    def get_selection_source_table(self, desired_table: AssetTable) -> Tuple[AssetTable, bool]:
         """
         Given the desired AssetTable, return the most appropriate AssetTable to pull or derive
         the desired data from. The Returned bool denotes when data must be selected or derived
@@ -643,9 +585,7 @@ class TimeseriesConfig:
             try:
                 tables.append(AssetTable.from_table_name(name))
             except ValueError:
-                log.warning(
-                    "Timeseries Database contains an invalid table name: %s", name
-                )
+                log.warning("Timeseries Database contains an invalid table name: %s", name)
 
         tables.sort(key=lambda tbl: tbl.period)
         asset_classes = {table.asset_class for table in tables}
@@ -663,28 +603,16 @@ class TimeseriesConfig:
                 cls_inst.htf_origins[asset_class] = origins[asset_class][2]
 
             # Store the raw inserted tables
-            cls_inst._inserted_tables[asset_class] = [
-                table for table in cls_tables if table.raw
-            ]
-            cls_inst.stored_periods[asset_class] = [
-                table.period for table in cls_inst._inserted_tables[asset_class]
-            ]
+            cls_inst._inserted_tables[asset_class] = [table for table in cls_tables if table.raw]
+            cls_inst.stored_periods[asset_class] = [table.period for table in cls_inst._inserted_tables[asset_class]]
 
             # Remove the Raw Tables so that doesn't need to be checked on following generators
             cls_tables = [table for table in cls_tables if not table.raw]
 
-            cls_inst._std_tables[asset_class] = [
-                table for table in cls_tables if table.rth is None
-            ]
-            cls_inst._rth_tables[asset_class] = [
-                table for table in cls_tables if table.rth is True
-            ]
-            cls_inst._eth_tables[asset_class] = [
-                table for table in cls_tables if table.rth is False
-            ]
-            cls_inst.calculated_periods[asset_class] = [
-                table.period for table in cls_tables
-            ]
+            cls_inst._std_tables[asset_class] = [table for table in cls_tables if table.rth is None]
+            cls_inst._rth_tables[asset_class] = [table for table in cls_tables if table.rth is True]
+            cls_inst._eth_tables[asset_class] = [table for table in cls_tables if table.rth is False]
+            cls_inst.calculated_periods[asset_class] = [table.period for table in cls_tables]
 
         return cls_inst
 
@@ -706,13 +634,9 @@ def _determine_conflicting_timedeltas(
     # These checks are currently in place since it is unclear if these edge-cases would cause problems
     # Safer to assume they will and remove this limitation later on if it is needed and doesn't cause any issues.
     if eth_delta < Timedelta(0):
-        raise ValueError(
-            "TimescaleDB ETH Aggregate Origin must occur before RTH Origin."
-        )
+        raise ValueError("TimescaleDB ETH Aggregate Origin must occur before RTH Origin.")
     if eth_delta >= Timedelta("1D"):
-        raise ValueError(
-            "TimescaleDB RTH Origin Must be less than 1D after ETH Origin."
-        )
+        raise ValueError("TimescaleDB RTH Origin Must be less than 1D after ETH Origin.")
 
     periods.sort()
     std_periods, rth_periods, eth_periods = [], [], []

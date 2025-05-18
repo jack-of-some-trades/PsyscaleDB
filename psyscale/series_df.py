@@ -67,9 +67,7 @@ def _standardize_names(df: pd.DataFrame):
     rename_map |= _column_name_check(column_names, ["volume", "v", "vol"])
     rename_map |= _column_name_check(column_names, ["price", "val", "data", "value"])
     rename_map |= _column_name_check(column_names, ["vwap", "vw"])
-    rename_map |= _column_name_check(
-        column_names, ["ticks", "tick", "count", "trade_count", "n"]
-    )
+    rename_map |= _column_name_check(column_names, ["ticks", "tick", "count", "trade_count", "n"])
 
     if len(rename_map) > 0:
         return df.rename(columns=rename_map, inplace=True)
@@ -90,15 +88,11 @@ def _column_name_check(
 
     if len(intersection) == 0:
         if required:
-            raise AttributeError(
-                f'Given data must have a "{" | ".join(aliases)}" column'
-            )
+            raise AttributeError(f'Given data must have a "{" | ".join(aliases)}" column')
         return {}
 
     if len(intersection) > 1:
-        raise AttributeError(
-            f'Given data can have only one "{" | ".join(aliases)}" type of column'
-        )
+        raise AttributeError(f'Given data can have only one "{" | ".join(aliases)}" type of column')
 
     return {intersection[0]: aliases[0]}
 
@@ -120,9 +114,7 @@ class Series_DF:
         # Set Consistent Time format (Pd.Timestamp, UTC, TZ Aware)
         pandas_df["dt"] = pd.to_datetime(pandas_df["dt"], utc=True)
         self.timedelta = determine_timedelta(pandas_df["dt"])
-        self.calendar = CALENDARS.request_calendar(
-            exchange, pandas_df["dt"].iloc[0], pandas_df["dt"].iloc[-1]
-        )
+        self.calendar = CALENDARS.request_calendar(exchange, pandas_df["dt"].iloc[0], pandas_df["dt"].iloc[-1])
 
         self.df = pandas_df.set_index("dt", drop=False)
         self._mark_ext()
@@ -209,13 +201,9 @@ class Calendars:
         # pylint: disable-next='global-statement'
         global mcal
         mcal = import_module("pandas_market_calendars")
-        self.EXCHANGE_NAMES = dict(
-            [(val.lower(), val) for val in mcal.get_calendar_names()]
-        )
+        self.EXCHANGE_NAMES = dict([(val.lower(), val) for val in mcal.get_calendar_names()])
 
-    def request_calendar(
-        self, exchange: Optional[str], start: pd.Timestamp, end: pd.Timestamp
-    ) -> str:
+    def request_calendar(self, exchange: Optional[str], start: pd.Timestamp, end: pd.Timestamp) -> str:
         "Request a Calendar & Schedule be Cached. Returns a token to access the cached calendar"
         if mcal is None:
             self._import_mcal()
@@ -265,16 +253,12 @@ class Calendars:
 
         return cal.name
 
-    def mark_session(
-        self, calendar: str, time_index: pd.DatetimeIndex
-    ) -> pd.Series | None:
+    def mark_session(self, calendar: str, time_index: pd.DatetimeIndex) -> pd.Series | None:
         "Return a Series that denotes the appropriate Trading Hours Session for the given Calendar"
         if mcal is None or calendar == "24/7":
             return None
 
-        return mcal.mark_session(
-            self.schedule_cache[calendar], time_index, label_map=EXT_MAP, closed="left"
-        )
+        return mcal.mark_session(self.schedule_cache[calendar], time_index, label_map=EXT_MAP, closed="left")
 
 
 # Prep the shared Calendars sudo-singleton, will init when needed
