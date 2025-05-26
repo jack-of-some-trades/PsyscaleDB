@@ -76,17 +76,11 @@ class TimeseriesPartialAbstract(PsyscaleCore):
 
             # Create Each Class of Timeseries Table
             if tick_tables is not None:
-                _configure_timeseries_schema(
-                    self, cursor, Schema.TICK_DATA, tick_tables
-                )
+                _configure_timeseries_schema(self, cursor, Schema.TICK_DATA, tick_tables)
             if minute_tables is not None:
-                _configure_timeseries_schema(
-                    self, cursor, Schema.MINUTE_DATA, minute_tables
-                )
+                _configure_timeseries_schema(self, cursor, Schema.MINUTE_DATA, minute_tables)
             if aggregate_tables is not None:
-                _configure_timeseries_schema(
-                    self, cursor, Schema.AGGREGATE_DATA, aggregate_tables
-                )
+                _configure_timeseries_schema(self, cursor, Schema.AGGREGATE_DATA, aggregate_tables)
 
         # Ensure The appropriate timeseries info is stored in the event this class is used
         # directly after setting the config
@@ -101,9 +95,7 @@ class TimeseriesPartialAbstract(PsyscaleCore):
                 # ---- ---- Read the Origin Timestamp Table ---- ----
                 origin_map = {}
                 try:
-                    cursor.execute(
-                        self[Op.SELECT, SeriesTbls._ORIGIN](schema, _all=True)
-                    )
+                    cursor.execute(self[Op.SELECT, SeriesTbls._ORIGIN](schema, _all=True))
                     for (asset, *origins), *_ in cursor.fetchall():
                         # Cursed parsing for the cursor response tuple.
                         # Origins must be RTH, ETH, then HTF
@@ -116,30 +108,21 @@ class TimeseriesPartialAbstract(PsyscaleCore):
 
                 # ---- Reconstruct Timeseries Config from existing table names ----
                 cursor.execute(self[Op.SELECT, GenericTbls.SCHEMA_TABLES](schema))
-                tbl_names = [
-                    rsp[0]
-                    for rsp in cursor.fetchall()
-                    if rsp[0] != SeriesTbls._ORIGIN.value
-                ]
+                tbl_names = [rsp[0] for rsp in cursor.fetchall() if rsp[0] != SeriesTbls._ORIGIN.value]
                 config = TimeseriesConfig.from_table_names(tbl_names, origin_map)
                 self._table_config[schema] = config
 
                 # ---- ---- Check that all the origin times are preset ---- ----
-                missing_asset_origins = set(config.asset_classes).difference(
-                    origin_map.keys()
-                )
+                missing_asset_origins = set(config.asset_classes).difference(origin_map.keys())
                 if len(missing_asset_origins) > 0:
                     log.error(
-                        "TimescaleDB Origins Table in schema '%s' is missing values "
-                        "for the following assets: %s",
+                        "TimescaleDB Origins Table in schema '%s' is missing values for the following assets: %s",
                         schema,
                         missing_asset_origins,
                     )
 
         # Give a notification on how to setup the database if it appears like it hasn't been
-        all_assets = {
-            chain(map(lambda x: x.asset_classes, self._table_config.values()))
-        }
+        all_assets = {chain(map(lambda x: x.asset_classes, self._table_config.values()))}
         if len(all_assets) == 0:
             log.warning(
                 "No Asset Types Detected in the Database. To Initialize the Database call "
@@ -148,9 +131,7 @@ class TimeseriesPartialAbstract(PsyscaleCore):
 
     # region ---- ---- Abstract methods implemented by partial subclasses ---- ----
     @abstractmethod
-    def inferred_metadata(
-        self, symbol: int | str, timeframe: Timedelta, rth: bool = False
-    ) -> MetadataInfo | None: ...
+    def inferred_metadata(self, symbol: int | str, timeframe: Timedelta, rth: bool = False) -> MetadataInfo | None: ...
 
     @abstractmethod
     def stored_metadata(
@@ -282,18 +263,12 @@ def _add_timeseries_asset_classes(
             "htf_origin": config.htf_origins[asset],
         }
         log.info("Inserting Origin Timestamps: %s", origin_args)
-        cursor.execute(
-            cmds[Op.INSERT, SeriesTbls._ORIGIN](schema, asset, **origin_args)
-        )
+        cursor.execute(cmds[Op.INSERT, SeriesTbls._ORIGIN](schema, asset, **origin_args))
 
         # Generate Raw insertion tables
         for tbl in config.raw_tables(asset):
             log.info("Generating table for: '%s'.'%s'", schema, tbl)
-            tbl_type = (
-                SeriesTbls.TICK
-                if tbl.period == Timedelta(0)
-                else SeriesTbls.RAW_AGGREGATE
-            )
+            tbl_type = SeriesTbls.TICK if tbl.period == Timedelta(0) else SeriesTbls.RAW_AGGREGATE
 
             cursor.execute(cmds[Op.CREATE, tbl_type](schema, tbl))
 
@@ -303,11 +278,7 @@ def _add_timeseries_asset_classes(
         for tbl in tbls:
             log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
             ref_table = config.get_aggregation_source(tbl)
-            tbl_type = (
-                SeriesTbls.CONTINUOUS_TICK_AGG
-                if ref_table.period == Timedelta(0)
-                else SeriesTbls.CONTINUOUS_AGG
-            )
+            tbl_type = SeriesTbls.CONTINUOUS_TICK_AGG if ref_table.period == Timedelta(0) else SeriesTbls.CONTINUOUS_AGG
             cursor.execute(cmd := cmds[Op.CREATE, tbl_type](schema, tbl, ref_table))
             log.debug("CMD: %s", cmd.as_string())
 
@@ -325,13 +296,9 @@ def _update_timeseries_asset_classes(
         return
 
     for asset in asset_updates:
-        removals = set(stored_config.all_tables(asset)).difference(
-            config.all_tables(asset)
-        )
+        removals = set(stored_config.all_tables(asset)).difference(config.all_tables(asset))
 
-        additions = set(config.all_tables(asset)).difference(
-            stored_config.all_tables(asset)
-        )
+        additions = set(config.all_tables(asset)).difference(stored_config.all_tables(asset))
 
         if len(removals) == 0 and len(additions) == 0:
             log.info("No changes needed for asset_class: %s", asset)
@@ -352,9 +319,7 @@ def _update_timeseries_asset_classes(
             "htf_origin": config.htf_origins[asset],
         }
         log.info("Updating Origin Timestamps: %s", origin_args)
-        cursor.execute(
-            cmds[Op.UPDATE, SeriesTbls._ORIGIN](schema, asset, **origin_args)
-        )
+        cursor.execute(cmds[Op.UPDATE, SeriesTbls._ORIGIN](schema, asset, **origin_args))
 
         # Remove All Calculated Data Tables
         log.info("Updating config for Asset: %s", asset)
@@ -386,11 +351,7 @@ def _update_timeseries_asset_classes(
         # Create new Raw Tables
         for tbl in [tbl for tbl in additions if tbl.raw]:
             log.info("Generating table for: '%s'.'%s'", schema, tbl)
-            tbl_type = (
-                SeriesTbls.TICK
-                if tbl.period == Timedelta(0)
-                else SeriesTbls.RAW_AGGREGATE
-            )
+            tbl_type = SeriesTbls.TICK if tbl.period == Timedelta(0) else SeriesTbls.RAW_AGGREGATE
 
             cursor.execute(cmds[Op.CREATE, tbl_type](schema, tbl))
 
@@ -400,11 +361,7 @@ def _update_timeseries_asset_classes(
         for tbl in tbls:
             log.info("Generating Continuous Aggregate for: '%s'.'%s'", schema, tbl)
             ref_table = config.get_aggregation_source(tbl)
-            tbl_type = (
-                SeriesTbls.CONTINUOUS_TICK_AGG
-                if ref_table.period == Timedelta(0)
-                else SeriesTbls.CONTINUOUS_AGG
-            )
+            tbl_type = SeriesTbls.CONTINUOUS_TICK_AGG if ref_table.period == Timedelta(0) else SeriesTbls.CONTINUOUS_AGG
             cursor.execute(cmd := cmds[Op.CREATE, tbl_type](schema, tbl, ref_table))
             log.debug("CMD: %s", cmd.as_string())
 
@@ -434,10 +391,7 @@ def _del_timeseries_asset_classes(
             log.info("Keeping asset_class: %s", asset)
             continue
 
-        _del = input(
-            "This will permanently remove all Downloaded and Calculated Data. "
-            "Are you Sure? y/[N] : "
-        )
+        _del = input("This will permanently remove all Downloaded and Calculated Data. Are you Sure? y/[N] : ")
 
         if not (_del == "y" or _del == "Y"):
             log.info("Keeping asset_class: %s", asset)

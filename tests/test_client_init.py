@@ -29,9 +29,7 @@ def test_00_initlization_state(test_url):
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 def test_01_client_initilization_from_env(test_container: PostgresContainer):
     os.environ["PSYSCALE_HOST"] = test_container.get_container_host_ip()
-    os.environ["PSYSCALE_PORT"] = str(
-        test_container.get_exposed_port(test_container.port)
-    )
+    os.environ["PSYSCALE_PORT"] = str(test_container.get_exposed_port(test_container.port))
     os.environ["PSYSCALE_USER"] = test_container.username
     os.environ["PSYSCALE_PASSWORD"] = test_container.password
     os.environ["PSYSCALE_DB_NAME"] = test_container.dbname
@@ -41,6 +39,23 @@ def test_01_client_initilization_from_env(test_container: PostgresContainer):
 
     assert rtn[0][0] == 1
     assert status == "SELECT 1"
+
+    # Ensure vars are cleared and error is raised
+    env_vars = [
+        "PSYSCALE_DB_NAME",
+        "PSYSCALE_HOST",
+        "PSYSCALE_PASSWORD",
+        "PSYSCALE_PORT",
+        "PSYSCALE_USER",
+        "PSYSCALE_VOLUME_PATH",
+    ]
+
+    for var in env_vars:
+        os.environ.pop(var)
+
+    with pytest.raises(AttributeError):
+        # No Environment variables are set, should error
+        db = PsyscaleDB()
 
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")

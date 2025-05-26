@@ -86,9 +86,7 @@ class PsyscaleAsyncCore(PsyscaleCore):
         _timeout = LOCAL_POOL_GEN_TIMEOUT if self.db_cfg.is_local else POOL_GEN_TIMEOUT
 
         try:
-            self._async_pool = AsyncConnectionPool(
-                self.db_cfg.url, open=False, timeout=_timeout
-            )
+            self._async_pool = AsyncConnectionPool(self.db_cfg.url, open=False, timeout=_timeout)
             await self._async_pool.open(timeout=_timeout)
         except PoolTimeout as e:
             raise e  #

@@ -99,14 +99,10 @@ class SeriesDataPartial(TimeseriesPartialAbstract):
                     timeframe,
                     mdata.table.period,
                 )
-                cmd = self[Op.COPY, SeriesTbls.CALCULATE_AGGREGATE](
-                    mdata, timeframe, rth, start, end, limit, _rtns
-                )
+                cmd = self[Op.COPY, SeriesTbls.CALCULATE_AGGREGATE](mdata, timeframe, rth, start, end, limit, _rtns)
             else:
                 # Works for both Aggregates and Raw Tick Data Retrieval
-                cmd = self[Op.COPY, SeriesTbls.RAW_AGGREGATE](
-                    mdata, rth, start, end, limit, _rtns
-                )
+                cmd = self[Op.COPY, SeriesTbls.RAW_AGGREGATE](mdata, rth, start, end, limit, _rtns)
 
             buffer = BytesIO()
             with cursor.copy(cmd) as copy:
@@ -142,11 +138,7 @@ class SeriesDataPartial(TimeseriesPartialAbstract):
             - Action to take when a UNIQUE conflict occurs. Erroring allows for faster insertion
             if it can be ensured that given data will be unique
         """
-        table = (
-            metadata.table
-            if metadata.table is not None
-            else AssetTable.from_table_name(metadata.table_name)
-        )
+        table = metadata.table if metadata.table is not None else AssetTable.from_table_name(metadata.table_name)
 
         data = _configure_and_check_df(data, exchange, table)
 
@@ -160,11 +152,7 @@ class SeriesDataPartial(TimeseriesPartialAbstract):
                 return
 
         # Setup and copy data into database
-        buffer_tbl_type = (
-            SeriesTbls.TICK_BUFFER
-            if table.period == Timedelta(0)
-            else SeriesTbls.RAW_AGG_BUFFER
-        )
+        buffer_tbl_type = SeriesTbls.TICK_BUFFER if table.period == Timedelta(0) else SeriesTbls.RAW_AGG_BUFFER
 
         # Inject the data through a temporary table
         with self._cursor(raise_err=True) as cursor:
@@ -181,9 +169,7 @@ class SeriesDataPartial(TimeseriesPartialAbstract):
 
             # Merge the Temp Table By inserting / upserting from the Temporary Table
             _op = Op.UPSERT if on_conflict == "update" else Op.INSERT
-            cursor.execute(
-                self[_op, buffer_tbl_type](metadata.schema_name, table, pkey)
-            )
+            cursor.execute(self[_op, buffer_tbl_type](metadata.schema_name, table, pkey))
             log.info("Symbol Data Upsert Status Message: %s", cursor.statusmessage)
 
         self._update_series_data_edit_record(metadata, data, table)
@@ -209,9 +195,7 @@ class SeriesDataPartial(TimeseriesPartialAbstract):
 
             # Loop Through Schemas
             for schema, mdata_dict in self._altered_tables_mdata.items():
-                log.info(
-                    " ---- ---- Refreshing Timeseries Schema : %s  ---- ---- ", schema
-                )
+                log.info(" ---- ---- Refreshing Timeseries Schema : %s  ---- ---- ", schema)
 
                 # Loop Through Edited Tables
                 for table_name, mdata in mdata_dict.items():
@@ -220,9 +204,7 @@ class SeriesDataPartial(TimeseriesPartialAbstract):
                         table_name,
                     )
                     assert mdata.table  # Ensuring mata.Table is defined by post_init
-                    cont_aggs = self._table_config[
-                        Schema(schema)
-                    ].get_tables_to_refresh(mdata.table)
+                    cont_aggs = self._table_config[Schema(schema)].get_tables_to_refresh(mdata.table)
                     # Add some buffer dates so entire time chucks are covered
                     # Times Chucks will not refresh unless they are completely included
                     mdata.start_date -= Timedelta("4W")
@@ -232,28 +214,20 @@ class SeriesDataPartial(TimeseriesPartialAbstract):
                         if table.raw:
                             continue
 
-                        log.info(
-                            "Refreshing Continuous Aggregate : %s ", table.table_name
-                        )
+                        log.info("Refreshing Continuous Aggregate : %s ", table.table_name)
                         cursor.execute(
-                            self[Op.REFRESH, SeriesTbls.CONTINUOUS_AGG](
-                                schema, table, mdata.start_date, mdata.end_date
-                            )
+                            self[Op.REFRESH, SeriesTbls.CONTINUOUS_AGG](schema, table, mdata.start_date, mdata.end_date)
                         )
 
             # Refresh the metadata View to Reflect Updates
-            log.info(
-                "---- ---- Refreshing 'Security._Metadata' Materialized View ---- ----"
-            )
+            log.info("---- ---- Refreshing 'Security._Metadata' Materialized View ---- ----")
             cursor.execute(self[Op.REFRESH, AssetTbls._METADATA]())
 
         # Reset the mdata memory just in case
         del self._altered_tables
         del self._altered_tables_mdata
 
-    def _update_series_data_edit_record(
-        self, metadata: MetadataInfo, data: DataFrame, table: AssetTable
-    ):
+    def _update_series_data_edit_record(self, metadata: MetadataInfo, data: DataFrame, table: AssetTable):
         # Ensure records exist in this instance
         if not hasattr(self, "_altered_tables"):
             # pylint: disable=attribute-defined-outside-init
@@ -301,11 +275,7 @@ class AsyncSeriesDataPartial(TimeseriesPartialAsyncAbstract, SeriesDataPartial):
         on_conflict: Literal["update", "error", "ignore"] = "ignore",
     ):
         "See upsert_series() Docstring"
-        table = (
-            metadata.table
-            if metadata.table is not None
-            else AssetTable.from_table_name(metadata.table_name)
-        )
+        table = metadata.table if metadata.table is not None else AssetTable.from_table_name(metadata.table_name)
 
         data = _configure_and_check_df(data, exchange, table)
 
@@ -318,11 +288,7 @@ class AsyncSeriesDataPartial(TimeseriesPartialAsyncAbstract, SeriesDataPartial):
                 )
                 return
 
-        buffer_tbl_type = (
-            SeriesTbls.TICK_BUFFER
-            if table.period == Timedelta(0)
-            else SeriesTbls.RAW_AGG_BUFFER
-        )
+        buffer_tbl_type = SeriesTbls.TICK_BUFFER if table.period == Timedelta(0) else SeriesTbls.RAW_AGG_BUFFER
 
         # Inject the data through a temporary table
         async with self._acursor(raise_err=True) as cursor:
@@ -339,9 +305,7 @@ class AsyncSeriesDataPartial(TimeseriesPartialAsyncAbstract, SeriesDataPartial):
 
             # Merge the Temp Table By inserting / upserting from the Temporary Table
             _op = Op.UPSERT if on_conflict == "update" else Op.INSERT
-            await cursor.execute(
-                self[_op, buffer_tbl_type](metadata.schema_name, table, pkey)
-            )
+            await cursor.execute(self[_op, buffer_tbl_type](metadata.schema_name, table, pkey))
             log.info("Symbol Data Upsert Status Message: %s", cursor.statusmessage)
 
         self._update_series_data_edit_record(metadata, data, table)
@@ -427,14 +391,10 @@ class AsyncSeriesDataPartial(TimeseriesPartialAsyncAbstract, SeriesDataPartial):
                     timeframe,
                     mdata.table.period,
                 )
-                cmd = self[Op.COPY, SeriesTbls.CALCULATE_AGGREGATE](
-                    mdata, timeframe, rth, start, end, limit, _rtns
-                )
+                cmd = self[Op.COPY, SeriesTbls.CALCULATE_AGGREGATE](mdata, timeframe, rth, start, end, limit, _rtns)
             else:
                 # Works for both Aggregates and Raw Tick Data Retrieval
-                cmd = self[Op.COPY, SeriesTbls.RAW_AGGREGATE](
-                    mdata, rth, start, end, limit, _rtns
-                )
+                cmd = self[Op.COPY, SeriesTbls.RAW_AGGREGATE](mdata, rth, start, end, limit, _rtns)
 
             buffer = BytesIO()
             async with cursor.copy(cmd) as copy:
@@ -463,9 +423,7 @@ class AsyncSeriesDataPartial(TimeseriesPartialAsyncAbstract, SeriesDataPartial):
 
             # Loop Through Schemas
             for schema, mdata_dict in self._altered_tables_mdata.items():
-                log.info(
-                    " ---- ---- Refreshing Timeseries Schema : %s  ---- ---- ", schema
-                )
+                log.info(" ---- ---- Refreshing Timeseries Schema : %s  ---- ---- ", schema)
 
                 # Loop Through Edited Tables
                 for table_name, mdata in mdata_dict.items():
@@ -474,9 +432,7 @@ class AsyncSeriesDataPartial(TimeseriesPartialAsyncAbstract, SeriesDataPartial):
                         table_name,
                     )
                     assert mdata.table  # Ensuring mata.Table is defined by post_init
-                    cont_aggs = self._table_config[
-                        Schema(schema)
-                    ].get_tables_to_refresh(mdata.table)
+                    cont_aggs = self._table_config[Schema(schema)].get_tables_to_refresh(mdata.table)
                     # Add some buffer dates so entire time chucks are covered
                     # Times Chucks will not refresh unless they are completely included
                     mdata.start_date -= Timedelta("4W")
@@ -486,19 +442,13 @@ class AsyncSeriesDataPartial(TimeseriesPartialAsyncAbstract, SeriesDataPartial):
                         if table.raw:
                             continue
 
-                        log.info(
-                            "Refreshing Continuous Aggregate : %s ", table.table_name
-                        )
+                        log.info("Refreshing Continuous Aggregate : %s ", table.table_name)
                         await cursor.execute(
-                            self[Op.REFRESH, SeriesTbls.CONTINUOUS_AGG](
-                                schema, table, mdata.start_date, mdata.end_date
-                            )
+                            self[Op.REFRESH, SeriesTbls.CONTINUOUS_AGG](schema, table, mdata.start_date, mdata.end_date)
                         )
 
             # Refresh the metadata View to Reflect Updates
-            log.info(
-                "---- ---- Refreshing 'Security._Metadata' Materialized View ---- ----"
-            )
+            log.info("---- ---- Refreshing 'Security._Metadata' Materialized View ---- ----")
             await cursor.execute(self[Op.REFRESH, AssetTbls._METADATA]())
 
         # Reset the mdata memory just in case
@@ -506,9 +456,7 @@ class AsyncSeriesDataPartial(TimeseriesPartialAsyncAbstract, SeriesDataPartial):
         del self._altered_tables_mdata
 
 
-def _configure_and_check_df(
-    data: DataFrame, exchange: str | None, table: AssetTable
-) -> DataFrame:
+def _configure_and_check_df(data: DataFrame, exchange: str | None, table: AssetTable) -> DataFrame:
     # region ---- Check that the data matches name and 'NOT NULL' expectations
     series_df = Series_DF(data.copy(), exchange)  # Rename cols & Populate 'rth'
 
@@ -555,9 +503,7 @@ def _configure_and_check_df(
         assert "dt" in series_df.columns
         assert not series_df.df["dt"].isna().any()
     except AssertionError as e:
-        raise ValueError(
-            "Cannot insert symbol data into TimescaleDB. Dataframe is not formatted correctly"
-        ) from e
+        raise ValueError("Cannot insert symbol data into TimescaleDB. Dataframe is not formatted correctly") from e
 
     return series_df.df
 

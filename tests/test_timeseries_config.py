@@ -218,9 +218,7 @@ def test_config_asset_class_rth_indifferent():
 def test_get_selection_source_table():
     "Tests both get_selection_source_table and get_aggregation_source() that it relies on"
     # Exact Table is stored
-    mock_table = AssetTable(
-        asset_class="us_stock", period=Timedelta(days=1), rth=True, raw=False, ext=True
-    )
+    mock_table = AssetTable(asset_class="us_stock", period=Timedelta(days=1), rth=True, raw=False, ext=True)
     selected_table, needs_aggregation = TEST_CONFIG.get_selection_source_table(
         mock_table  # this func inherently allows for 'rtn_self'
     )
@@ -232,24 +230,14 @@ def test_get_selection_source_table():
     assert selected_table != mock_table
 
     # Table needs to be aggregated from like RTH aggregated data
-    mock_table = AssetTable(
-        asset_class="us_stock", period=Timedelta(days=2), rth=True, raw=False, ext=True
-    )
-    selected_table, needs_aggregation = TEST_CONFIG.get_selection_source_table(
-        mock_table
-    )
+    mock_table = AssetTable(asset_class="us_stock", period=Timedelta(days=2), rth=True, raw=False, ext=True)
+    selected_table, needs_aggregation = TEST_CONFIG.get_selection_source_table(mock_table)
     assert needs_aggregation
-    assert selected_table == AssetTable(
-        asset_class="us_stock", period=Timedelta(days=1), rth=True, raw=False, ext=True
-    )
+    assert selected_table == AssetTable(asset_class="us_stock", period=Timedelta(days=1), rth=True, raw=False, ext=True)
 
     # Table needs to be aggregated from a much lower timeframe that has needed EXT data
-    mock_table = AssetTable(
-        asset_class="us_stock", period=Timedelta(days=2), rth=False, raw=False, ext=True
-    )
-    selected_table, needs_aggregation = TEST_CONFIG.get_selection_source_table(
-        mock_table
-    )
+    mock_table = AssetTable(asset_class="us_stock", period=Timedelta(days=2), rth=False, raw=False, ext=True)
+    selected_table, needs_aggregation = TEST_CONFIG.get_selection_source_table(mock_table)
     assert needs_aggregation
     assert selected_table == AssetTable(
         asset_class="us_stock", period=Timedelta("30min"), rth=None, raw=False, ext=True
@@ -281,18 +269,14 @@ def test_get_selection_source_table():
 
 
 def test_get_tables_to_refresh():
-    mock_table = AssetTable(
-        asset_class="us_stock", period=Timedelta("1min"), rth=True, raw=True, ext=True
-    )
+    mock_table = AssetTable(asset_class="us_stock", period=Timedelta("1min"), rth=True, raw=True, ext=True)
     # Test All tables are returned
     assert TEST_CONFIG.get_tables_to_refresh(mock_table) == TEST_CONFIG.all_tables(
         mock_table.asset_class, include_raw=False
     )
 
     # test that only the tbls above the inserted timeframe are refreshed
-    mock_table = AssetTable(
-        asset_class="crypto", period=Timedelta("1h"), rth=True, raw=False, ext=True
-    )
+    mock_table = AssetTable(asset_class="crypto", period=Timedelta("1h"), rth=True, raw=False, ext=True)
     tbls = TEST_CONFIG.all_tables(mock_table.asset_class, include_raw=False)
     tbls = [tbl for tbl in tbls if tbl.period > Timedelta("1h")]
     assert TEST_CONFIG.get_tables_to_refresh(mock_table) == tbls
@@ -348,9 +332,7 @@ def test_config_from_table_names():
     reconstruct = TimeseriesConfig.from_table_names(test_config_table_names)
 
     for asset_class in reconstruct.asset_classes:
-        assert reconstruct.all_tables(asset_class) == TEST_CONFIG.all_tables(
-            asset_class
-        )
+        assert reconstruct.all_tables(asset_class) == TEST_CONFIG.all_tables(asset_class)
 
 
 # endregion
@@ -420,9 +402,7 @@ def test_invalid_eth_origin(prth):
         ValueError,
         match="TimescaleDB ETH Aggregate Origin must occur before RTH Origin.",
     ):
-        _determine_conflicting_timedeltas(
-            periods, rth_origin, eth_origin, prioritize_rth=prth
-        )
+        _determine_conflicting_timedeltas(periods, rth_origin, eth_origin, prioritize_rth=prth)
 
     # Test invalid case: ETH and RTH origin difference >= 1 day
     rth_origin = Timestamp("2025-04-22 10:00:00")
@@ -432,9 +412,7 @@ def test_invalid_eth_origin(prth):
         ValueError,
         match="TimescaleDB RTH Origin Must be less than 1D after ETH Origin.",
     ):
-        _determine_conflicting_timedeltas(
-            periods, rth_origin, eth_origin, prioritize_rth=prth
-        )
+        _determine_conflicting_timedeltas(periods, rth_origin, eth_origin, prioritize_rth=prth)
 
 
 # endregion
@@ -448,9 +426,7 @@ MINUTE_CONFIG = TimeseriesConfig(
         "equity": Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"equity": True},
-    calculated_periods={
-        "default": [Timedelta("5m"), Timedelta("30m"), Timedelta("1h")]
-    },
+    calculated_periods={"default": [Timedelta("5m"), Timedelta("30m"), Timedelta("1h")]},
     stored_periods={"default": [Timedelta("1m")]},
 )
 

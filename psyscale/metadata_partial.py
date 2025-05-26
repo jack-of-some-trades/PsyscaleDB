@@ -31,9 +31,7 @@ class MetadataPartial(TimeseriesPartialAbstract):
     created first.
     """
 
-    def inferred_metadata(
-        self, symbol: int | str, timeframe: Timedelta, rth: bool = False
-    ) -> MetadataInfo | None:
+    def inferred_metadata(self, symbol: int | str, timeframe: Timedelta, rth: bool = False) -> MetadataInfo | None:
         """
         Return the Metadata for a symbol at a given timeframe. This function will use the stored
         metadata to infer what series data can be derived from the stored series data in the event
@@ -164,9 +162,7 @@ class MetadataPartial(TimeseriesPartialAbstract):
                 except AssertionError:
                     pass
 
-            log.info(
-                "---- ---- Refreshing 'Security._Metadata' Materialized View ---- ----"
-            )
+            log.info("---- ---- Refreshing 'Security._Metadata' Materialized View ---- ----")
             cursor.execute(self[Op.REFRESH, AssetTbls._METADATA]())
 
     def _manual_refresh_loop(self, cursor: TupleCursor, method: str):
@@ -204,18 +200,12 @@ class MetadataPartial(TimeseriesPartialAbstract):
                         continue
 
                 log.info("Refreshing Continuous Aggregate : %s ", table)
-                cursor.execute(
-                    self[Op.REFRESH, SeriesTbls.CONTINUOUS_AGG](schema, table)
-                )
+                cursor.execute(self[Op.REFRESH, SeriesTbls.CONTINUOUS_AGG](schema, table))
 
 
-def _fetch_stored_metadata(
-    db: MetadataPartial, pkey: int, filters: dict[MetadataArgs | str, Any] = {}
-):
+def _fetch_stored_metadata(db: MetadataPartial, pkey: int, filters: dict[MetadataArgs | str, Any] = {}):
     _filters = [("pkey", "=", pkey)]  # Ensure a Pkey filter is Passed
-    _filters.extend(
-        [(k, "=", v) for k, v in filters.items() if k in (METADATA_ARGS - {"pkey"})]
-    )
+    _filters.extend([(k, "=", v) for k, v in filters.items() if k in (METADATA_ARGS - {"pkey"})])
 
     rsp, _ = db.execute(db[Op.SELECT, AssetTbls._METADATA](_filters), dict_cursor=True)
     return [MetadataInfo(**row) for row in rsp]
@@ -238,15 +228,11 @@ def _fetch_all_metadata(db: MetadataPartial, pkey: int) -> list[MetadataInfo]:
     _filter = ("pkey", "=", pkey)
 
     rsp, _ = db.execute(
-        db[Op.SELECT, GenericTbls.TABLE](
-            Schema.SECURITY, AssetTbls.SYMBOLS, _rtn_args, _filter
-        ),
+        db[Op.SELECT, GenericTbls.TABLE](Schema.SECURITY, AssetTbls.SYMBOLS, _rtn_args, _filter),
         dict_cursor=True,
     )
     if len(rsp) == 0:
-        raise ValueError(
-            f"Cannot determine Symbol updates needed. {pkey = } is unknown."
-        )
+        raise ValueError(f"Cannot determine Symbol updates needed. {pkey = } is unknown.")
     rsp = rsp[0]
     asset_class = rsp["asset_class"]
 
@@ -258,9 +244,7 @@ def _fetch_all_metadata(db: MetadataPartial, pkey: int) -> list[MetadataInfo]:
     elif rsp["store_aggregate"]:
         schema = Schema.AGGREGATE_DATA
     else:
-        log.warning(
-            "Requested metadata for Symbol w/ pkey %s, but it is not set to be stored."
-        )
+        log.warning("Requested metadata for Symbol w/ pkey %s, but it is not set to be stored.")
         return []
 
     try:

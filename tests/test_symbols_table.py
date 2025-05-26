@@ -23,6 +23,13 @@ def symbols_df():
                 "asset_class": "equity",
                 "sector": "Technology",
             },
+            {
+                "symbol": "SPY",
+                "name": "S&P 500",
+                "exchange": "ARCA",
+                "asset_class": "fund",
+                "sector": "Something",
+            },
         ]
     )
 
@@ -76,8 +83,23 @@ def clean_symbols_table(psyscale_db):
 def test_upsert_inserts_symbols(psyscale_db, clean_symbols_table, symbols_df):
     inserted, updated = psyscale_db.upsert_securities(symbols_df, source="test_api")
 
-    assert set(inserted.tolist()) == {"AAPL", "GOOG"}
+    assert set(inserted.tolist()) == {"AAPL", "GOOG", "SPY"}
     assert updated.empty
+
+
+def test_select_distinct_symbols(psyscale_db, clean_symbols_table, symbols_df):
+    psyscale_db.upsert_securities(symbols_df, source="test_api")
+
+    equal_sets = lambda x, y: set(x).issubset(y) and set(x).issuperset(y)
+
+    assert equal_sets(psyscale_db.distinct_sources(), ["test_api"])
+    assert equal_sets(psyscale_db.distinct_exchanges(), ["NASDAQ", "ARCA"])
+    assert equal_sets(psyscale_db.distinct_asset_classes(), ["equity", "fund"])
+
+    combos = psyscale_db.select_distinct_symbols(["asset_class", "exchange"])
+
+    assert ("equity", "NASDAQ") in combos
+    assert ("fund", "ARCA") in combos
 
 
 def test_upsert_ignore_conflict(psyscale_db, clean_symbols_table, symbols_df):
@@ -88,23 +110,17 @@ def test_upsert_ignore_conflict(psyscale_db, clean_symbols_table, symbols_df):
     modified = symbols_df.copy()
     modified.loc[modified.symbol == "AAPL", "name"] = "Fake Apple Inc."
 
-    inserted, updated = psyscale_db.upsert_securities(
-        modified, source="test_api", on_conflict="ignore"
-    )
+    inserted, updated = psyscale_db.upsert_securities(modified, source="test_api", on_conflict="ignore")
 
     assert inserted.empty
     assert updated.empty
 
     # Fetch from db and confirm original value remains
-    result = psyscale_db.search_symbols(
-        {"symbol": "AAPL", "source": "test_api"}, strict_symbol_search="="
-    )
+    result = psyscale_db.search_symbols({"symbol": "AAPL", "source": "test_api"}, strict_symbol_search="=")
     assert result[0]["name"] == "Apple Inc."  # Original name retained
 
     psyscale_db.execute(
-        sql.SQL("TRUNCATE TABLE {schema}.{table};").format(
-            schema=Schema.SECURITY, table=AssetTbls.SYMBOLS
-        )
+        sql.SQL("TRUNCATE TABLE {schema}.{table};").format(schema=Schema.SECURITY, table=AssetTbls.SYMBOLS)
     )
 
 
@@ -113,32 +129,24 @@ def test_upsert_updates_on_conflict(psyscale_db, clean_symbols_table, symbols_df
     psyscale_db.upsert_securities(symbols_df, source="test_api")
 
     # Confirm the insert
-    result = psyscale_db.search_symbols(
-        {"symbol": "GOOG", "source": "test_api"}, strict_symbol_search="="
-    )
+    result = psyscale_db.search_symbols({"symbol": "GOOG", "source": "test_api"}, strict_symbol_search="=")
     assert result[0]["name"] == "Alphabet Inc."
 
     # Modify one symbol to simulate an update
     modified = symbols_df.copy()
     modified.loc[modified.symbol == "GOOG", "name"] = "Alphabet Inc. Class A"
 
-    inserted, updated = psyscale_db.upsert_securities(
-        modified, source="test_api", on_conflict="update"
-    )
+    inserted, updated = psyscale_db.upsert_securities(modified, source="test_api", on_conflict="update")
 
     assert inserted.empty
-    assert updated.tolist() == ["AAPL", "GOOG"]
+    assert updated.tolist() == ["AAPL", "GOOG", "SPY"]
 
     # Confirm the update
-    result = psyscale_db.search_symbols(
-        {"symbol": "GOOG", "source": "test_api"}, strict_symbol_search="="
-    )
+    result = psyscale_db.search_symbols({"symbol": "GOOG", "source": "test_api"}, strict_symbol_search="=")
     assert result[0]["name"] == "Alphabet Inc. Class A"
 
     psyscale_db.execute(
-        sql.SQL("TRUNCATE TABLE {schema}.{table};").format(
-            schema=Schema.SECURITY, table=AssetTbls.SYMBOLS
-        )
+        sql.SQL("TRUNCATE TABLE {schema}.{table};").format(schema=Schema.SECURITY, table=AssetTbls.SYMBOLS)
     )
 
 
@@ -147,9 +155,7 @@ def test_upsert_updates_on_conflict(psyscale_db, clean_symbols_table, symbols_df
 # region ---- ---- Test symbol Atters Insert & Search ---- ----
 
 
-def test_upsert_with_attrs_and_retrieval(
-    psyscale_db, clean_symbols_table, attrs_symbols
-):
+def test_upsert_with_attrs_and_retrieval(psyscale_db, clean_symbols_table, attrs_symbols):
     inserted, updated = psyscale_db.upsert_securities(attrs_symbols, source="UnitTest")
 
     # Validate both were inserted
@@ -161,9 +167,7 @@ def test_upsert_with_attrs_and_retrieval(
         result = psyscale_db.search_symbols(
             {
                 "symbol": symbol,
-                "exchange": attrs_symbols.loc[
-                    attrs_symbols["symbol"] == symbol, "exchange"
-                ].iloc[0],
+                "exchange": attrs_symbols.loc[attrs_symbols["symbol"] == symbol, "exchange"].iloc[0],
             },
             return_attrs=True,
             strict_symbol_search="=",
@@ -173,13 +177,9 @@ def test_upsert_with_attrs_and_retrieval(
 
         assert row["symbol"] == symbol
         assert "attrs" in row
+        assert row["attrs"].get("sector") == attrs_symbols.loc[attrs_symbols["symbol"] == symbol, "sector"].iloc[0]
         assert (
-            row["attrs"].get("sector")
-            == attrs_symbols.loc[attrs_symbols["symbol"] == symbol, "sector"].iloc[0]
-        )
-        assert (
-            row["attrs"].get("shortable")
-            == attrs_symbols.loc[attrs_symbols["symbol"] == symbol, "shortable"].iloc[0]
+            row["attrs"].get("shortable") == attrs_symbols.loc[attrs_symbols["symbol"] == symbol, "shortable"].iloc[0]
         )
 
 
@@ -188,9 +188,7 @@ def test_search_by_jsonb_attr(psyscale_db, clean_symbols_table, attrs_symbols):
     psyscale_db.upsert_securities(attrs_symbols, source="UnitTest")
 
     # Search for a symbol by JSONB attribute
-    results = psyscale_db.search_symbols(
-        {"shortable": True}, return_attrs=True, attrs_search=True
-    )
+    results = psyscale_db.search_symbols({"shortable": True}, return_attrs=True, attrs_search=True)
 
     assert isinstance(results, list)
     assert any(row["symbol"] == "TEST1" for row in results)
@@ -256,16 +254,12 @@ def test_fuzzy_trigram_search_orders_results(psyscale_db, clean_symbols_table):
     assert names[3] == "Testing Simbol"  # Least Relevant Should be last.
 
 
-def test_update_symbol_valid_and_constraint_violation(
-    psyscale_db, symbols_df, clean_symbols_table, caplog
-):
+def test_update_symbol_valid_and_constraint_violation(psyscale_db, symbols_df, clean_symbols_table, caplog):
     # Insert test symbols
     psyscale_db.upsert_securities(symbols_df, source="UnitTest")
 
     # Retrieve pkey of "AAPL"
-    aapl = psyscale_db.search_symbols(
-        {"symbol": "AAPL", "source": "UnitTest"}, strict_symbol_search="="
-    )
+    aapl = psyscale_db.search_symbols({"symbol": "AAPL", "source": "UnitTest"}, strict_symbol_search="=")
     assert aapl and "pkey" in aapl[0]
     pkey = aapl[0]["pkey"]
 
@@ -274,9 +268,7 @@ def test_update_symbol_valid_and_constraint_violation(
     assert result is True
 
     # Ensure update can be retrieved (and pkey search works)
-    aapl = psyscale_db.search_symbols(
-        {"pkey": pkey}, strict_symbol_search="=", return_attrs=True
-    )[0]
+    aapl = psyscale_db.search_symbols({"pkey": pkey}, strict_symbol_search="=", return_attrs=True)[0]
     assert "store_tick" in aapl and aapl["store_tick"]
     assert "store" in aapl and aapl["store"]
 

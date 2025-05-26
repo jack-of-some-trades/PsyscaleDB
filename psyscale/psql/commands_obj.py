@@ -58,25 +58,19 @@ class Commands:
                 )
             self.operation_map[operation] |= tbl_map
 
-    def __getitem__(
-        self, args: Tuple[Operation, StrEnum | str]
-    ) -> Callable[..., sql.Composed]:
+    def __getitem__(self, args: Tuple[Operation, StrEnum | str]) -> Callable[..., sql.Composed]:
         """
         Accessor to retrieve sql commands. Does not type check function args.
         Call Signature is Obj[Operation, Table](*Function Specific args)
         """
         if args[1] not in self.operation_map[args[0]]:
             tbl = args[1] if isinstance(args[1], str) else args[1].value
-            raise ValueError(
-                f"Operation '{args[0].name}' not known for Postgres Table: {tbl}"
-            )
+            raise ValueError(f"Operation '{args[0].name}' not known for Postgres Table: {tbl}")
 
         return self.operation_map[args[0]][args[1]]
 
 
-OperationMap: TypeAlias = dict[
-    Operation, dict[StrEnum | str, Callable[..., sql.Composed]]
-]
+OperationMap: TypeAlias = dict[Operation, dict[StrEnum | str, Callable[..., sql.Composed]]]
 
 OPERATION_MAP: OperationMap = {
     # Mapping that defines the SQL Composing Function for each Operation and Table Combination

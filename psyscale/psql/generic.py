@@ -29,11 +29,7 @@ def where(filters: Sequence[Filter] | Filter) -> sql.Composable:
     if isinstance(filters, (sql.Composable, Tuple)):
         return sql.SQL(" WHERE ") + filter_composer([filters])  # type:ignore
     else:
-        return (
-            sql.SQL("")
-            if len(filters) == 0
-            else sql.SQL(" WHERE ") + filter_composer(filters)
-        )
+        return sql.SQL("") if len(filters) == 0 else sql.SQL(" WHERE ") + filter_composer(filters)
 
 
 def limit(val: Optional[str | int]) -> sql.Composable:
@@ -55,20 +51,14 @@ def order(arg: Optional[str], ascending: Optional[bool] = True) -> sql.Composabl
 
 
 def arg_list(args: Sequence[str], distinct: bool = False) -> sql.Composable:
-    fmt_args = (
-        sql.SQL("*")
-        if len(args) == 0
-        else sql.SQL(", ").join(map(sql.Identifier, args))
-    )
+    fmt_args = sql.SQL("*") if len(args) == 0 else sql.SQL(", ").join(map(sql.Identifier, args))
     return sql.SQL("DISTINCT ") + fmt_args if distinct else fmt_args
 
 
 def update_args(args: Sequence[Argument]) -> sql.Composable:
     if len(args) == 0:
         raise ValueError("Attempting to update arguments, but no values given to SET.")
-    composables = [
-        _arg_placeholder(v) if isinstance(v, str) else _arg_literal(*v) for v in args
-    ]
+    composables = [_arg_placeholder(v) if isinstance(v, str) else _arg_literal(*v) for v in args]
     return sql.SQL(", ").join(composables)
 
 
@@ -100,9 +90,7 @@ def _filter_placeholder(arg: str, comparison: Comparators) -> sql.Composable:
     )
 
 
-def filter_composer(
-    filters: Sequence[Filter], mode: Literal["AND", "OR"] = "AND"
-) -> sql.Composable:
+def filter_composer(filters: Sequence[Filter], mode: Literal["AND", "OR"] = "AND") -> sql.Composable:
     composables = [
         (
             sql.SQL("(") + v + sql.SQL(")")
@@ -128,17 +116,13 @@ def list_schemas() -> sql.Composed:
 
 
 def list_mat_views(schema: str) -> sql.Composed:
-    return sql.SQL(
-        "SELECT matviewname FROM pg_matviews WHERE schemaname = {schema_name};"
-    ).format(
+    return sql.SQL("SELECT matviewname FROM pg_matviews WHERE schemaname = {schema_name};").format(
         schema_name=sql.Literal(schema),
     )
 
 
 def list_tables(schema: str) -> sql.Composed:
-    return sql.SQL(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema = {schema_name};"
-    ).format(
+    return sql.SQL("SELECT table_name FROM information_schema.tables WHERE table_schema = {schema_name};").format(
         schema_name=sql.Literal(schema),
     )
 
@@ -150,45 +134,29 @@ def create_schema(schema: str) -> sql.Composed:
 
 
 def drop_schema(schema: str, cascade: bool = True) -> sql.Composed:
-    return sql.SQL(
-        "DROP SCHEMA IF EXISTS {schema_name}" + " CASCADE" if cascade else "" + ";"
-    ).format(
+    return sql.SQL("DROP SCHEMA IF EXISTS {schema_name}" + " CASCADE" if cascade else "" + ";").format(
         schema_name=sql.Identifier(schema),
     )
 
 
 def drop_table(schema: str, table: str, cascade: bool = True) -> sql.Composed:
+    return sql.SQL("DROP TABLE IF EXISTS {schema_name}.{table_name}" + " CASCADE" if cascade else "" + ";").format(
+        schema_name=sql.Identifier(schema),
+        table_name=sql.Identifier(table),
+    )
+
+
+def drop_materialized_view(schema: str, table: str, cascade: bool = True) -> sql.Composed:
     return sql.SQL(
-        "DROP TABLE IF EXISTS {schema_name}.{table_name}" + " CASCADE"
-        if cascade
-        else "" + ";"
+        "DROP MATERIALIZED VIEW IF EXISTS {schema_name}.{table_name}" + " CASCADE" if cascade else "" + ";"
     ).format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(table),
     )
 
 
-def drop_materialized_view(
-    schema: str, table: str, cascade: bool = True
-) -> sql.Composed:
-    return sql.SQL(
-        "DROP MATERIALIZED VIEW IF EXISTS {schema_name}.{table_name}" + " CASCADE"
-        if cascade
-        else "" + ";"
-    ).format(
-        schema_name=sql.Identifier(schema),
-        table_name=sql.Identifier(table),
-    )
-
-
-def delete(
-    schema: str, table: str, filters: list[Filter], cascade: bool = True
-) -> sql.Composed:
-    return sql.SQL(
-        "DELETE FROM {schema_name}.{table_name} {filter}" + " CASCADE"
-        if cascade
-        else "" + ";"
-    ).format(
+def delete(schema: str, table: str, filters: list[Filter], cascade: bool = True) -> sql.Composed:
+    return sql.SQL("DELETE FROM {schema_name}.{table_name} {filter}" + " CASCADE" if cascade else "" + ";").format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(table),
         filter=where(filters),
@@ -205,9 +173,7 @@ def select(
     *,
     distinct: bool = False,
 ) -> sql.Composed:
-    return sql.SQL(
-        "SELECT {rtn_args} FROM {schema_name}.{table_name}{filter}{order}{limit};"
-    ).format(
+    return sql.SQL("SELECT {rtn_args} FROM {schema_name}.{table_name}{filter}{order}{limit};").format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(table),
         rtn_args=arg_list(arguments, distinct),

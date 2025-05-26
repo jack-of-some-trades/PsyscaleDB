@@ -112,9 +112,7 @@ def _symbol_score(name: Optional[str], symbol: Optional[str]) -> sql.Composable:
     # Utilizes similarity function from pg_trgm to rank matches by relevancy
     match name, symbol:
         case str(), str():
-            stmt = sql.SQL(
-                "(similarity(name, {_name}) + similarity(symbol, {_symbol}))"
-            )
+            stmt = sql.SQL("(similarity(name, {_name}) + similarity(symbol, {_symbol}))")
         case None, str():
             stmt = sql.SQL("similarity(symbol, {_symbol})")
         case str(), None:
@@ -131,9 +129,7 @@ def _inner_attrs_select(attrs: Optional[dict[str, Any]] = None) -> sql.Composabl
         return sql.SQL("_base_matches")
     else:
         # Perform an Inner Select on _base_matches to test for the given Attrs.
-        return sql.SQL("( SELECT * FROM _base_matches WHERE attrs @> {json} )").format(
-            json=dumps(attrs)
-        )
+        return sql.SQL("( SELECT * FROM _base_matches WHERE attrs @> {json} )").format(json=dumps(attrs))
 
 
 def create_symbol_buffer() -> sql.Composed:
@@ -253,8 +249,7 @@ def _available_tables() -> sql.Composable:
     """
     ).format(
         schemas=sql.SQL(", ").join(
-            sql.Literal(s)
-            for s in [Schema.TICK_DATA, Schema.MINUTE_DATA, Schema.AGGREGATE_DATA]
+            sql.Literal(s) for s in [Schema.TICK_DATA, Schema.MINUTE_DATA, Schema.AGGREGATE_DATA]
         )
     )
 
@@ -283,8 +278,7 @@ def _available_aggregates() -> sql.Composable:
         """
     ).format(
         schemas=sql.SQL(", ").join(
-            sql.Literal(s)
-            for s in [Schema.TICK_DATA, Schema.MINUTE_DATA, Schema.AGGREGATE_DATA]
+            sql.Literal(s) for s in [Schema.TICK_DATA, Schema.MINUTE_DATA, Schema.AGGREGATE_DATA]
         )
     )
 

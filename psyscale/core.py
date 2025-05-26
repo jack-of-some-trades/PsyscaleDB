@@ -54,6 +54,21 @@ LOCAL_POOL_GEN_TIMEOUT = 0.2  # wait time when starting a local Connection Pool
 DictCursor: TypeAlias = pg.Cursor[pg_rows.DictRow]
 TupleCursor: TypeAlias = pg.Cursor[pg_rows.TupleRow]
 
+BASE_ENV_VARS = [
+    "PSYSCALE_HOST",
+    "PSYSCALE_PORT",
+    "PSYSCALE_USER",
+    "PSYSCALE_DB_NAME",
+    "PSYSCALE_PASSWORD",
+]
+YML_ENV_VARS = [
+    "PSYSCALE_PORT",
+    "PSYSCALE_USER",
+    "PSYSCALE_DB_NAME",
+    "PSYSCALE_PASSWORD",
+    "PSYSCALE_VOLUME_PATH",
+]
+
 
 @dataclass
 class PsyscaleConnectParams:
@@ -100,9 +115,7 @@ class PsyscaleConnectParams:
         query = parse_qs(parsed.query)
 
         if parsed.scheme not in ("postgres", "postgresql"):
-            raise ValueError(
-                f"Invalid URL scheme '{parsed.scheme}'. Expected 'postgres' or 'postgresql'."
-            )
+            raise ValueError(f"Invalid URL scheme '{parsed.scheme}'. Expected 'postgres' or 'postgresql'.")
 
         return cls(
             host=parsed.hostname or "localhost",
@@ -123,18 +136,21 @@ class PsyscaleConnectParams:
         """
         if url := os.getenv("PSYSCALE_URL"):
             inst = cls.from_url(url)
-        else:
+        elif any(map(os.getenv, BASE_ENV_VARS)):
+            # Ensure at least one ENV was given before supplying defaults
             inst = cls(
                 host=os.getenv("PSYSCALE_HOST") or "localhost",
                 port=int(os.getenv("PSYSCALE_PORT") or 5432),
-                user=os.getenv("PSYSCALE_USER") or "",
-                database=os.getenv("PSYSCALE_DB_NAME") or "",
-                password=os.getenv("PSYSCALE_PASSWORD") or "",
+                user=os.getenv("PSYSCALE_USER") or "postgres",
+                database=os.getenv("PSYSCALE_DB_NAME") or "postgres",
+                password=os.getenv("PSYSCALE_PASSWORD") or "password",
                 sslmode=os.getenv("PSYSCALE_SSLMODE"),
                 application_name=os.getenv("PSYSCALE_APP_NAME"),
             )
-            # Only works when variables are already individually addressable.
-            inst.env_init = True
+            # Can only docker_compose yml init when all these vars are present
+            inst.env_init = all(map(os.getenv, YML_ENV_VARS))
+        else:
+            raise AttributeError("Cannot Initialize PsyscaleDB from ENV. No Env variables given.")
 
         if inst.is_local:
             # Get additional params if using a local database
@@ -409,16 +425,12 @@ class PsyscaleCore:
 
     # region ----------- Private Database Interaction Methods -----------
 
-    def _init_and_start_localdb(
-        self, docker_compose_fpath: Optional[str], vol_path: str | None
-    ):
+    def _init_and_start_localdb(self, docker_compose_fpath: Optional[str], vol_path: str | None):
         "Starts Up, via subprocess terminal cmds, a local Docker Container that runs TimescaleDB"
         try:  # Ensure Docker is installed
             subprocess.run(["docker", "--version"], capture_output=True, check=True)
         except subprocess.CalledProcessError as e:
-            raise OSError(
-                "Cannot Initialize Local PsyscaleDB, OS does not have docker installed."
-            ) from e
+            raise OSError("Cannot Initialize Local PsyscaleDB, OS does not have docker installed.") from e
 
         # Ensure Timescale Image has been pulled.
         try:
@@ -428,9 +440,7 @@ class PsyscaleCore:
                 check=True,
             )
         except subprocess.CalledProcessError as e:
-            raise OSError(
-                "Failed to Read Installed Docker Images, Ensure Docker Engine is Running"
-            ) from e
+            raise OSError("Failed to Read Installed Docker Images, Ensure Docker Engine is Running") from e
 
         # The following check may only work on windows...
         if len(p.stdout.decode().strip().split("\n")) <= 1:
@@ -455,10 +465,7 @@ class PsyscaleCore:
 
         if docker_compose_fpath is not None:
             # Overwrite Default YML path if given a valid filepath
-            if not (
-                os.path.isfile(docker_compose_fpath)
-                and docker_compose_fpath.lower().endswith((".yaml", ".yml"))
-            ):
+            if not (os.path.isfile(docker_compose_fpath) and docker_compose_fpath.lower().endswith((".yaml", ".yml"))):
                 raise ValueError(f"{docker_compose_fpath = } must be a .yaml/.yml File")
             self.yml_path = docker_compose_fpath
         else:
@@ -472,9 +479,7 @@ class PsyscaleCore:
         )
 
         if p.returncode != 0:
-            raise OSError(
-                f"Failed to start Docker-Compose with Err Msg: {p.stderr.decode()}"
-            )
+            raise OSError(f"Failed to start Docker-Compose with Err Msg: {p.stderr.decode()}")
 
     def _ensure_std_schemas_exist(self):
         with self._cursor() as cursor:
