@@ -116,7 +116,7 @@ class TimeseriesPartialAbstract(PsyscaleCore):
                 missing_asset_origins = set(config.asset_classes).difference(origin_map.keys())
                 if len(missing_asset_origins) > 0:
                     log.error(
-                        "TimescaleDB Origins Table in schema '%s' is missing values " "for the following assets: %s",
+                        "TimescaleDB Origins Table in schema '%s' is missing values for the following assets: %s",
                         schema,
                         missing_asset_origins,
                     )
@@ -391,7 +391,7 @@ def _del_timeseries_asset_classes(
             log.info("Keeping asset_class: %s", asset)
             continue
 
-        _del = input("This will permanently remove all Downloaded and Calculated Data. " "Are you Sure? y/[N] : ")
+        _del = input("This will permanently remove all Downloaded and Calculated Data. Are you Sure? y/[N] : ")
 
         if not (_del == "y" or _del == "Y"):
             log.info("Keeping asset_class: %s", asset)
