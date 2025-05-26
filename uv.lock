@@ -592,14 +592,15 @@ dependencies = [
     { name = "pandas" },
     { name = "pandas-market-calendars" },
     { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "python-dotenv" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "alpaca-py" },
-    { name = "python-dotenv" },
 ]
 dist = [
+    { name = "build" },
     { name = "setuptools" },
     { name = "twine" },
     { name = "wheel" },
@@ -611,30 +612,23 @@ test = [
     { name = "testcontainers" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "build" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "alpaca-py", marker = "extra == 'dev'", specifier = ">=0.39.4" },
+    { name = "build", marker = "extra == 'dist'", specifier = ">=1.2.2.post1" },
     { name = "coverage", marker = "extra == 'test'", specifier = ">=7.8.0" },
     { name = "pandas", specifier = ">=2.2.2" },
     { name = "pandas-market-calendars", specifier = ">=5.0.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2.6" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.5" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.26.0" },
-    { name = "python-dotenv", marker = "extra == 'dev'", specifier = ">=1.1.0" },
+    { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "setuptools", marker = "extra == 'dist'", specifier = ">=80.7.1" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.10.0" },
     { name = "twine", marker = "extra == 'dist'", specifier = ">=6.1.0" },
     { name = "wheel", marker = "extra == 'dist'", specifier = ">=0.45.1" },
 ]
-provides-extras = ["dev", "dist", "test"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "build", specifier = ">=1.2.2.post1" }]
+provides-extras = ["dev", "test", "dist"]
 
 [[package]]
 name = "pycparser"

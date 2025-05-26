@@ -35,9 +35,7 @@ MINUTE_CONFIG = TimeseriesConfig(
         "equity": pd.Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"equity": True},
-    calculated_periods={
-        "default": [pd.Timedelta("5m"), pd.Timedelta("30m"), pd.Timedelta("1h")]
-    },
+    calculated_periods={"default": [pd.Timedelta("5m"), pd.Timedelta("30m"), pd.Timedelta("1h")]},
     stored_periods={"default": [pd.Timedelta("1m")]},
 )
 

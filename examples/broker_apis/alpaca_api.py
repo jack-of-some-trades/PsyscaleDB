@@ -37,13 +37,8 @@ class AlpacaAPI:
     def __init__(self, api_keys: dict[str, Any] = ALPACA_API_KEYS):
         self.api_keys = api_keys
 
-        if (
-            self.api_keys.get("api_key", None) is None
-            or self.api_keys.get("secret_key", None) is None
-        ):
-            raise ValueError(
-                "ALPACA_API_KEY and/or ALPACA_SECRET_KEY were not loaded as env variables."
-            )
+        if self.api_keys.get("api_key", None) is None or self.api_keys.get("secret_key", None) is None:
+            raise ValueError("ALPACA_API_KEY and/or ALPACA_SECRET_KEY were not loaded as env variables.")
 
         self.stock_client = StockHistoricalDataClient(**self.api_keys)
         self.crypto_client = CryptoHistoricalDataClient(**self.api_keys)
@@ -94,9 +89,7 @@ class AlpacaAPI:
         # this is painfully slow when requesting large sets of data.
         try:
             if asset_class == "crypto":
-                rsp: Dict[str, Any] = self.crypto_client.get_crypto_bars(  # type: ignore
-                    CryptoBarsRequest(**args)
-                )
+                rsp: Dict[str, Any] = self.crypto_client.get_crypto_bars(CryptoBarsRequest(**args))  # type: ignore
                 return DataFrame(rsp[symbol]) if symbol in rsp else None
             else:
                 rsp: Dict[str, Any] = self.stock_client.get_stock_bars(  # type: ignore

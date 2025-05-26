@@ -127,14 +127,10 @@ def _update_stored_symbols(db: PsyscaleDB):
             continue
         store = "store_" + store
 
-        symbols = db.search_symbols(
-            _filter, limit=None, strict_symbol_search=STRICT_SYMBOL_SEARCH
-        )
+        symbols = db.search_symbols(_filter, limit=None, strict_symbol_search=STRICT_SYMBOL_SEARCH)
 
         if len(symbols) == 1:
-            log.info(
-                "Filter Returned a Single Symbol: \n%s", dumps(symbols[0], indent=2)
-            )
+            log.info("Filter Returned a Single Symbol: \n%s", dumps(symbols[0], indent=2))
             rsp = input(f"Set the Symbol to Import {store} Data? y/[N] : ")
             if rsp.lower() == "y":
                 db.update_symbol(symbols[0]["pkey"], {store: True})
@@ -154,9 +150,7 @@ def _update_stored_symbols(db: PsyscaleDB):
                 dumps(_filter, indent=2),
                 pd.DataFrame(symbols),
             )
-            rsp = input(
-                f"Set All Symbols to Import {store} Data or Step through Each? all/skip/[each] : "
-            )
+            rsp = input(f"Set All Symbols to Import {store} Data or Step through Each? all/skip/[each] : ")
             if rsp.lower() == "skip":
                 continue
             if rsp.lower() == "all":

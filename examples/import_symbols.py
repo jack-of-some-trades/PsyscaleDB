@@ -40,8 +40,7 @@ def _import_alpaca(db: PsyscaleDB, on_conflict: Literal["ignore", "update"]):
     alpaca_api = AlpacaAPI()
 
     filtered_assets = alpaca_api.assets[
-        alpaca_api.assets["tradable"].to_numpy()
-        & (alpaca_api.assets["status"] == "active").to_numpy()
+        alpaca_api.assets["tradable"].to_numpy() & (alpaca_api.assets["status"] == "active").to_numpy()
     ].copy()
 
     extra_cols = set(alpaca_api.assets.columns) - {
@@ -69,15 +68,11 @@ def _import_alpaca(db: PsyscaleDB, on_conflict: Literal["ignore", "update"]):
     filtered_assets.loc[_cryptos, "exchange"] = "alpaca_crypto"
 
     log.info("# of Alpaca Symbols: %s", len(filtered_assets))
-    log.info(
-        "Filtered Alpaca Asset Classes: %s", {*filtered_assets["asset_class"].to_list()}
-    )
+    log.info("Filtered Alpaca Asset Classes: %s", {*filtered_assets["asset_class"].to_list()})
     log.info("Filtered Alpaca Exchanges: %s", {*filtered_assets["exchange"].to_list()})
     log.debug("Filtered Alpaca Assets: \n%s", filtered_assets)
 
-    inserted, updated = db.upsert_securities(
-        filtered_assets, "Alpaca", on_conflict=on_conflict
-    )
+    inserted, updated = db.upsert_securities(filtered_assets, "Alpaca", on_conflict=on_conflict)
 
     log.info("# Alpaca Symbols Inserted: %s", len(inserted))
     if len(inserted) > 0:

@@ -45,9 +45,7 @@ __all__ = (
 
 _log = logging.getLogger("psyscale_log")
 handler = logging.StreamHandler(None)
-formatter = logging.Formatter(
-    "[PsyscaleDB] - [.\\%(filename)s Line: %(lineno)d] - %(levelname)s: %(message)s"
-)
+formatter = logging.Formatter("[PsyscaleDB] - [.\\%(filename)s Line: %(lineno)d] - %(levelname)s: %(message)s")
 handler.setFormatter(formatter)
 _log.addHandler(handler)
 _log.setLevel("WARNING")

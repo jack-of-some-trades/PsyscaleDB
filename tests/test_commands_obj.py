@@ -33,10 +33,7 @@ def test_initializes_with_default_map():
     assert Operation.CREATE in cmds.operation_map
 
     # Assert access works for both str & strEnum
-    assert (
-        cmds[Operation.CREATE, AssetTbls.SYMBOLS.value]
-        == cmds[Operation.CREATE, AssetTbls.SYMBOLS]
-    )
+    assert cmds[Operation.CREATE, AssetTbls.SYMBOLS.value] == cmds[Operation.CREATE, AssetTbls.SYMBOLS]
 
 
 def test_merge_operations_overrides_existing_strenum(mock_operation_map, caplog):
@@ -57,13 +54,11 @@ def test_merge_operations_overrides_existing_strenum(mock_operation_map, caplog)
 
     # Assert Warning Message was Thrown
     assert any(
-        f"Overriding psyscale default Operation.CREATE for tables: {set([SeriesTbls.TICK])}"
-        in record.message
+        f"Overriding psyscale default Operation.CREATE for tables: {set([SeriesTbls.TICK])}" in record.message
         for record in caplog.records
     ), "Expected a warning about overriding CREATE operations"
     assert any(
-        f"Overriding psyscale default Operation.SELECT for tables: {set([SeriesTbls._ORIGIN])}"
-        in record.message
+        f"Overriding psyscale default Operation.SELECT for tables: {set([SeriesTbls._ORIGIN])}" in record.message
         for record in caplog.records
     ), "Expected a warning about overriding SELECT operations"
 
@@ -85,13 +80,11 @@ def test_merge_operations_overrides_existing_str(mock_operation_map, caplog):
 
     # Assert Warning Message was Thrown
     assert any(
-        f"Overriding psyscale default Operation.CREATE for tables: {set([SeriesTbls.TICK])}"
-        in record.message
+        f"Overriding psyscale default Operation.CREATE for tables: {set([SeriesTbls.TICK])}" in record.message
         for record in caplog.records
     ), "Expected a warning about overriding CREATE operations"
     assert any(
-        f"Overriding psyscale default Operation.SELECT for tables: {set([SeriesTbls._ORIGIN])}"
-        in record.message
+        f"Overriding psyscale default Operation.SELECT for tables: {set([SeriesTbls._ORIGIN])}" in record.message
         for record in caplog.records
     ), "Expected a warning about overriding SELECT operations"
 

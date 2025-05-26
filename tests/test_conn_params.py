@@ -27,18 +27,14 @@ def test_direct_instantiation_sets_correct_url():
 
 
 def test_direct_instantiation_without_sslmode_or_app_name():
-    params = PsyscaleConnectParams(
-        host="127.0.0.1", port=5432, user="admin", password="admin123", database="db"
-    )
+    params = PsyscaleConnectParams(host="127.0.0.1", port=5432, user="admin", password="admin123", database="db")
     assert "sslmode" not in params.url
     assert "application_name" not in params.url
     assert params.is_local
 
 
 def test_from_url_parses_correctly():
-    url = (
-        "postgresql://user:pass@myhost:5432/mydb?sslmode=disable&application_name=test"
-    )
+    url = "postgresql://user:pass@myhost:5432/mydb?sslmode=disable&application_name=test"
     params = PsyscaleConnectParams.from_url(url)
 
     assert params.host == "myhost"
@@ -86,9 +82,7 @@ def test_from_env_without_url_uses_individual_vars():
 
 @patch.dict(
     os.environ,
-    {
-        "PSYSCALE_URL": "postgresql://u:p@host:1234/db?sslmode=require&application_name=env_url"
-    },
+    {"PSYSCALE_URL": "postgresql://u:p@host:1234/db?sslmode=require&application_name=env_url"},
     clear=True,
 )
 def test_from_env_with_url_parses_correctly():
@@ -107,14 +101,10 @@ def test_from_env_with_url_parses_correctly():
 
 @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "::1"])
 def test_is_local_true_for_local_hosts(host):
-    params = PsyscaleConnectParams(
-        host=host, port=5432, user="u", password="p", database="db"
-    )
+    params = PsyscaleConnectParams(host=host, port=5432, user="u", password="p", database="db")
     assert params.is_local
 
 
 def test_is_local_false_for_remote_host():
-    params = PsyscaleConnectParams(
-        host="remote-db.example.com", port=5432, user="u", password="p", database="db"
-    )
+    params = PsyscaleConnectParams(host="remote-db.example.com", port=5432, user="u", password="p", database="db")
     assert not params.is_local

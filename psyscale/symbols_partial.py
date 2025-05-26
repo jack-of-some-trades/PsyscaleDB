@@ -2,6 +2,7 @@
 
 import logging
 from typing import (
+    Iterable,
     Literal,
     Any,
     Optional,
@@ -185,16 +186,33 @@ class SymbolsPartial(PsyscaleCore):
         )
 
         with self._cursor(dict_cursor=True) as cursor:
-            cursor.execute(
-                self[Op.SELECT, AssetTbls.SYMBOLS](
-                    name, symbol, filters, return_attrs, attrs, limit
-                )
-            )
+            cursor.execute(self[Op.SELECT, AssetTbls.SYMBOLS](name, symbol, filters, return_attrs, attrs, limit))
             return cursor.fetchall()
 
-    def update_symbol(
-        self, symbols: int | str | list[int | str], args: dict[SymbolArgs | str, Any]
-    ) -> bool:
+    def distinct_sources(self, filters: dict[SymbolArgs | str, Any] = {}) -> list[str]:
+        "Return the distinct Data Broker Sources stored in the Symbols Table."
+        return [arg[0] for arg in self.select_distinct_symbols({"source"}, filters)]
+
+    def distinct_exchanges(self, filters: dict[SymbolArgs | str, Any] = {}) -> list[str]:
+        "Return the Distinct Exchanges stored in the Symbols Table."
+        return [arg[0] for arg in self.select_distinct_symbols({"exchange"}, filters)]
+
+    def distinct_asset_classes(self, filters: dict[SymbolArgs | str, Any] = {}) -> list[str]:
+        "Return the distinct Asset Classes stored in the Symbols Table."
+        return [arg[0] for arg in self.select_distinct_symbols({"asset_class"}, filters)]
+
+    def select_distinct_symbols(
+        self, args: Iterable[SymbolArgs], filters: dict[SymbolArgs | str, Any] = {}
+    ) -> list[tuple]:
+        "Select the distinct combinations of the given arguments from the Symbols Table."
+        args = [arg for arg in args if arg in SYMBOL_ARGS]  # filter to only valid args
+        _filters = [(k, "=", v) for k, v in filters.items()]
+        rsp, _ = self.execute(
+            self[Op.SELECT, GenericTbls.TABLE](Schema.SECURITY, AssetTbls.SYMBOLS, args, _filters, distinct=True),
+        )
+        return rsp
+
+    def update_symbol(self, symbols: int | str | list[int | str], args: dict[SymbolArgs | str, Any]) -> bool:
         """
         Update a Single Symbol or list of symbols with the given arguments.
 
@@ -234,9 +252,7 @@ class SymbolsPartial(PsyscaleCore):
             _tmp_list = [(self._get_pkey(symbol), symbol) for symbol in symbols]
             pkeys = [_tmp_list for pkey, _ in _tmp_list if pkey is not None]
             unknown_symbols = [symbol for pkey, symbol in _tmp_list if pkey is None]
-            log.warning(
-                "Cannot Update Symbol(s) %s, symbol is not known.", unknown_symbols
-            )
+            log.warning("Cannot Update Symbol(s) %s, symbol is not known.", unknown_symbols)
 
         if "pkey" in args:
             args.pop("pkey")
@@ -250,21 +266,15 @@ class SymbolsPartial(PsyscaleCore):
             return False
 
         if len(pkeys) == 0:
-            log.warning(
-                "Attemping to update Database symbol(s) but no pkeys were given"
-            )
+            log.warning("Attemping to update Database symbol(s) but no pkeys were given")
             return False
 
         # Convert The pkeys to a List so only one Update Command needs to be sent.
-        _filter = sql.SQL("pkey=ANY(ARRAY[{pkeys}])").format(
-            pkeys=sql.SQL(",").join(sql.Literal(v) for v in pkeys)
-        )
+        _filter = sql.SQL("pkey=ANY(ARRAY[{pkeys}])").format(pkeys=sql.SQL(",").join(sql.Literal(v) for v in pkeys))
 
         with self._cursor() as cursor:
             cursor.execute(self[Op.UPDATE, AssetTbls.SYMBOLS](_args, _filter))
-            return (
-                cursor.statusmessage is not None and cursor.statusmessage == "UPDATE 1"
-            )
+            return cursor.statusmessage is not None and cursor.statusmessage == "UPDATE 1"
 
         return False  # Default return if cursor throws error
 
@@ -347,11 +357,7 @@ class AsyncSymbolsPartial(PsyscaleAsyncCore, SymbolsPartial):
         )
 
         async with self._acursor(dict_cursor=True) as cursor:
-            await cursor.execute(
-                self[Op.SELECT, AssetTbls.SYMBOLS](
-                    name, symbol, filters, return_attrs, attrs, limit
-                )
-            )
+            await cursor.execute(self[Op.SELECT, AssetTbls.SYMBOLS](name, symbol, filters, return_attrs, attrs, limit))
             return await cursor.fetchall()
 
 
@@ -367,9 +373,7 @@ def _prep_symbol_search(
         filters = [("pkey", "=", filter_args["pkey"])]
         name, symbol, attrs, limit = None, None, None, 1
     else:
-        filters = [
-            (k, "=", v) for k, v in filter_args.items() if k in STRICT_SYMBOL_ARGS
-        ]
+        filters = [(k, "=", v) for k, v in filter_args.items() if k in STRICT_SYMBOL_ARGS]
 
         name = filter_args.get("name", None)
         symbol = filter_args.get("symbol", None)
@@ -385,11 +389,7 @@ def _prep_symbol_search(
             symbol = None  # Prevents the 'similarity' search from being added
 
         # Filter all extra given filter params into a separate dict
-        attrs = (
-            dict((k, v) for k, v in filter_args.items() if k not in SYMBOL_ARGS)
-            if attrs_search
-            else None
-        )
+        attrs = dict((k, v) for k, v in filter_args.items() if k not in SYMBOL_ARGS) if attrs_search else None
         if attrs and len(attrs) == 0:
             attrs = None
 
@@ -416,9 +416,9 @@ def _prep_symbols_upsert(symbols: DataFrame, source: str) -> DataFrame | None:
     symbols_fmt = symbols[[*req_cols]].copy()
 
     # Turn all extra Columns into an attributes json obj.
-    symbols_fmt.loc[:, "attrs"] = symbols[
-        [*set(symbols.columns).difference(req_cols)]
-    ].apply(lambda x: x.to_json(), axis="columns")
+    symbols_fmt.loc[:, "attrs"] = symbols[[*set(symbols.columns).difference(req_cols)]].apply(
+        lambda x: x.to_json(), axis="columns"
+    )
 
     return symbols_fmt
 

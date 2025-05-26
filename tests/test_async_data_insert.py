@@ -50,9 +50,7 @@ MINUTE_CONFIG = TimeseriesConfig(
         "equity": pd.Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"equity": True},
-    calculated_periods={
-        "default": [pd.Timedelta("5m"), pd.Timedelta("30m"), pd.Timedelta("1h")]
-    },
+    calculated_periods={"default": [pd.Timedelta("5m"), pd.Timedelta("30m"), pd.Timedelta("1h")]},
     stored_periods={"default": [pd.Timedelta("1m")]},
 )
 
@@ -68,9 +66,7 @@ async def test_01_insert_symbols(psyscale_async: PsyscaleAsync, symbols):
     rsp = await psyscale_async.search_symbols_async({"asset_class": "equity"})
     assert len(rsp) == 2
 
-    rsp = await psyscale_async.search_symbols_async(
-        {"symbol": "AAPL"}, strict_symbol_search=True
-    )
+    rsp = await psyscale_async.search_symbols_async({"symbol": "AAPL"}, strict_symbol_search=True)
     aapl = rsp[0]
     assert aapl["pkey"]
     assert aapl["symbol"] == "AAPL"
@@ -104,24 +100,18 @@ async def test_01_metadata_fetch(psyscale_async: PsyscaleAsync):
 
 
 @pytest.mark.asyncio
-async def test_02_aggregate_data_insert(
-    psyscale_async: PsyscaleAsync, caplog, AAPL_MIN_DATA
-):
+async def test_02_aggregate_data_insert(psyscale_async: PsyscaleAsync, caplog, AAPL_MIN_DATA):
     # pkey and metadata fetch already asserted working in first test.
     aapl = (await psyscale_async.search_symbols_async({"store_minute": True}))[0]
     metadata = psyscale_async.stored_metadata(aapl["pkey"], _all=True)[0]
 
     with pytest.raises(ValueError):
         # Should error since a 'rth' column is needed but not given.
-        await psyscale_async.upsert_series_async(
-            aapl["pkey"], metadata, AAPL_MIN_DATA, None
-        )
+        await psyscale_async.upsert_series_async(aapl["pkey"], metadata, AAPL_MIN_DATA, None)
 
     with pytest.raises(AttributeError):
         # Should error since a column is missing
-        await psyscale_async.upsert_series_async(
-            aapl["pkey"], metadata, AAPL_MIN_DATA.drop(columns="date"), None
-        )
+        await psyscale_async.upsert_series_async(aapl["pkey"], metadata, AAPL_MIN_DATA.drop(columns="date"), None)
 
     # These inter trackers should not yet be populated
     assert not hasattr(psyscale_async, "_altered_tables")
@@ -130,9 +120,7 @@ async def test_02_aggregate_data_insert(
     # Should Work, renames columns and all (column renaming tests in series_df tests)
     # And Dropps Extra Columns
     with caplog.at_level("DEBUG"):
-        await psyscale_async.upsert_series_async(
-            aapl["pkey"], metadata, AAPL_MIN_DATA, "NYSE"
-        )
+        await psyscale_async.upsert_series_async(aapl["pkey"], metadata, AAPL_MIN_DATA, "NYSE")
 
     # Assert there was no cursor error in the upsert function.
     assert all(record.levelname != "ERROR" for record in caplog.records)
@@ -165,9 +153,7 @@ async def test_03_check_inserted_data(psyscale_async: PsyscaleAsync):
 
     # check that the full dataset got inserted
     raw_data = Series_DF(pd.read_csv("example_data/AAPL_1min.csv"), "NYSE")
-    raw_data.df.drop(
-        columns=set(raw_data.columns).difference(AGGREGATE_ARGS), inplace=True
-    )
+    raw_data.df.drop(columns=set(raw_data.columns).difference(AGGREGATE_ARGS), inplace=True)
     raw_data.df.set_index(keys=pd.RangeIndex(0, 2083), inplace=True)
     raw_data.df["rth"] = raw_data.df["rth"].astype("int64")
 
