@@ -11,7 +11,7 @@ from psyscale import PsyscaleAsync, PsyscaleDB
 from psyscale.core import TIMESCALE_IMAGE
 from psyscale.psql.orm import TimeseriesConfig
 from psyscale.series_df import Series_DF
-
+from psyscale.dev import Op, AssetTbls
 
 SYMBOLS = pd.DataFrame(
     [
@@ -35,9 +35,7 @@ MINUTE_CONFIG = TimeseriesConfig(
         "equity": pd.Timestamp("2000/01/03 04:00", tz="America/New_York"),
     },
     prioritize_rth={"equity": True},
-    calculated_periods={
-        "default": [pd.Timedelta("5m"), pd.Timedelta("30m"), pd.Timedelta("1h")]
-    },
+    calculated_periods={"default": [pd.Timedelta("5m"), pd.Timedelta("30m"), pd.Timedelta("1h")]},
     stored_periods={"default": [pd.Timedelta("1m")]},
 )
 
@@ -45,8 +43,8 @@ MINUTE_CONFIG = TimeseriesConfig(
 @pytest.fixture(scope="module")
 def spy_data():
     t_start = time()
-    # Replace the *s with the name of a large csv file. I did ~1.75M Rows
-    df = pd.read_csv("example_data/***.csv")
+    # You'll need to place this fine in the example_Data folder. it will be too large to push to github
+    df = pd.read_csv("example_data/spy_data.csv")
     # pre-mark the 'rth' column, remove dt duplicate column that's generated
     print(f"Spy Data Fetch Time : {time() - t_start}s")
     yield Series_DF(df, "NYSE").df.drop(columns="dt")
@@ -100,7 +98,11 @@ def test_sync_insert_speed(sync_db: PsyscaleDB, spy_data):
 
     t_start = time()
     sync_db.upsert_series(spy["pkey"], minute_metadata, spy_data)
-    assert "" == f"Sync insert : {time() - t_start:.3f}s"
+    t_end = time()
+
+    sync_db.execute(sync_db[Op.REFRESH, AssetTbls._METADATA]())
+
+    assert "" == f"Sync insert : {t_end - t_start:.3f}s"
 
 
 def test_sync_withdraw_speed(sync_db: PsyscaleDB):
@@ -116,10 +118,14 @@ async def test_async_insert_speed(async_db: PsyscaleAsync, spy_data):
 
     t_start = time()
     await async_db.upsert_series_async(spy["pkey"], minute_metadata, spy_data)
-    assert "" == f"Async insert : {time() - t_start:.3f}s"
+    t_end = time()
+
+    async_db.execute(async_db[Op.REFRESH, AssetTbls._METADATA]())
+
+    assert "" == f"Async insert : {t_end - t_start:.3f}s"
 
 
 async def test_async_withdraw_speed(async_db: PsyscaleAsync):
     t_start = time()
-    print(await async_db.get_series_async("spy", pd.Timedelta("1m")))
+    await async_db.get_series_async("spy", pd.Timedelta("1m"))
     assert "" == f"Async Withdraw : {time() - t_start:.3f}s"

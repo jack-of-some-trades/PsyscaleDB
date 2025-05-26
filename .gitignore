@@ -17,6 +17,7 @@ dist
 # Development Testing Code #
 /examples/test.py
 /tests/htmlcov/*
+/tests/example_data/spy_data.csv
 
 # Packages #
 ############
