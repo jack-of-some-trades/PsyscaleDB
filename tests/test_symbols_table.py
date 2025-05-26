@@ -23,6 +23,13 @@ def symbols_df():
                 "asset_class": "equity",
                 "sector": "Technology",
             },
+            {
+                "symbol": "SPY",
+                "name": "S&P 500",
+                "exchange": "ARCA",
+                "asset_class": "fund",
+                "sector": "Something",
+            },
         ]
     )
 
@@ -76,8 +83,23 @@ def clean_symbols_table(psyscale_db):
 def test_upsert_inserts_symbols(psyscale_db, clean_symbols_table, symbols_df):
     inserted, updated = psyscale_db.upsert_securities(symbols_df, source="test_api")
 
-    assert set(inserted.tolist()) == {"AAPL", "GOOG"}
+    assert set(inserted.tolist()) == {"AAPL", "GOOG", "SPY"}
     assert updated.empty
+
+
+def test_select_distinct_symbols(psyscale_db, clean_symbols_table, symbols_df):
+    psyscale_db.upsert_securities(symbols_df, source="test_api")
+
+    equal_sets = lambda x, y: set(x).issubset(y) and set(x).issuperset(y)
+
+    assert equal_sets(psyscale_db.distinct_sources(), ["test_api"])
+    assert equal_sets(psyscale_db.distinct_exchanges(), ["NASDAQ", "ARCA"])
+    assert equal_sets(psyscale_db.distinct_asset_classes(), ["equity", "fund"])
+
+    combos = psyscale_db.select_distinct_symbols(["asset_class", "exchange"])
+
+    assert ("equity", "NASDAQ") in combos
+    assert ("fund", "ARCA") in combos
 
 
 def test_upsert_ignore_conflict(psyscale_db, clean_symbols_table, symbols_df):
@@ -117,7 +139,7 @@ def test_upsert_updates_on_conflict(psyscale_db, clean_symbols_table, symbols_df
     inserted, updated = psyscale_db.upsert_securities(modified, source="test_api", on_conflict="update")
 
     assert inserted.empty
-    assert updated.tolist() == ["AAPL", "GOOG"]
+    assert updated.tolist() == ["AAPL", "GOOG", "SPY"]
 
     # Confirm the update
     result = psyscale_db.search_symbols({"symbol": "GOOG", "source": "test_api"}, strict_symbol_search="=")

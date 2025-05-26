@@ -2,6 +2,7 @@
 
 import logging
 from typing import (
+    Iterable,
     Literal,
     Any,
     Optional,
@@ -187,6 +188,29 @@ class SymbolsPartial(PsyscaleCore):
         with self._cursor(dict_cursor=True) as cursor:
             cursor.execute(self[Op.SELECT, AssetTbls.SYMBOLS](name, symbol, filters, return_attrs, attrs, limit))
             return cursor.fetchall()
+
+    def distinct_sources(self, filters: dict[SymbolArgs | str, Any] = {}) -> list[str]:
+        "Return the distinct Data Broker Sources stored in the Symbols Table."
+        return [arg[0] for arg in self.select_distinct_symbols({"source"}, filters)]
+
+    def distinct_exchanges(self, filters: dict[SymbolArgs | str, Any] = {}) -> list[str]:
+        "Return the Distinct Exchanges stored in the Symbols Table."
+        return [arg[0] for arg in self.select_distinct_symbols({"exchange"}, filters)]
+
+    def distinct_asset_classes(self, filters: dict[SymbolArgs | str, Any] = {}) -> list[str]:
+        "Return the distinct Asset Classes stored in the Symbols Table."
+        return [arg[0] for arg in self.select_distinct_symbols({"asset_class"}, filters)]
+
+    def select_distinct_symbols(
+        self, args: Iterable[SymbolArgs], filters: dict[SymbolArgs | str, Any] = {}
+    ) -> list[tuple]:
+        "Select the distinct combinations of the given arguments from the Symbols Table."
+        args = [arg for arg in args if arg in SYMBOL_ARGS]  # filter to only valid args
+        _filters = [(k, "=", v) for k, v in filters.items()]
+        rsp, _ = self.execute(
+            self[Op.SELECT, GenericTbls.TABLE](Schema.SECURITY, AssetTbls.SYMBOLS, args, _filters, distinct=True),
+        )
+        return rsp
 
     def update_symbol(self, symbols: int | str | list[int | str], args: dict[SymbolArgs | str, Any]) -> bool:
         """
