@@ -239,6 +239,7 @@ class Calendars:
             return cal.name
 
         # Cached Calendar Requested
+        extra_dates = None
         cal = self.mkt_cache[cal.name]
         sched = self.schedule_cache[cal.name]
         if sched.index[0] > start.tz_localize(None):
@@ -249,7 +250,9 @@ class Calendars:
             # Extend End of Schedule with an additional buffer
             extra_dates = cal.schedule(sched.index[-1] + pd.Timedelta("1D"), end)
             sched = pd.concat([sched, extra_dates])
-        self.schedule_cache[cal.name] = sched
+
+        if extra_dates is not None:
+            self.schedule_cache[cal.name] = sched
 
         return cal.name
 
