@@ -21,6 +21,13 @@ def AAPL_MIN_DATA():
 
 
 @pytest.fixture
+def SPY_MIN_DATA():
+    df = pd.read_csv("example_data/spy_1min.csv")
+    df.rename({"dt": "date", "open": "o", "high": "max"}, inplace=True)
+    yield df
+
+
+@pytest.fixture
 def TICK_DATA():
     yield pd.read_csv("example_data/example_ticks.csv")
 
@@ -74,6 +81,13 @@ def psyscale_db(test_url):
                     "exchange": "NASDAQ",
                     "asset_class": "equity",
                     "sector": "Technology",
+                },
+                {
+                    "symbol": "SPY",
+                    "name": "S&P 500",
+                    "exchange": "ARCA",
+                    "asset_class": "equity",
+                    "sector": "ETF",
                 },
             ]
         ),
@@ -454,3 +468,122 @@ def test_10_calculated_tick_aggregates(psyscale_db: PsyscaleDB):
     df["dt"] = pd.to_datetime(df["dt"])
     # fmt: on
     assert_frame_equal(stored_data, df)
+
+
+# endregion
+
+# region ---- ---- HTF Data Tests ---- ----
+
+
+def test_11_htf_inferred_metadata(psyscale_db: PsyscaleDB, SPY_MIN_DATA):
+    # Upsert the Data. This process has already been tested above.
+    spy = psyscale_db.search_symbols({"symbol": "spy"})[0]
+    psyscale_db.update_symbol(spy["pkey"], {"store_minute": True})
+    metadata = psyscale_db.stored_metadata(spy["pkey"], _all=True)[0]
+    psyscale_db.upsert_series(spy["pkey"], metadata, SPY_MIN_DATA, "NYSE")
+    psyscale_db.refresh_aggregate_metadata()
+
+    # Check that it was inserted properly.
+    assert len(psyscale_db.stored_metadata(spy["pkey"])) == 4
+
+    # The following two would Error if the timedelta was not slightly interpreted
+    assert psyscale_db.inferred_metadata(spy["pkey"], pd.Timedelta("30.4D"))
+    assert psyscale_db.inferred_metadata(spy["pkey"], pd.Timedelta("365.25D"))
+
+    with pytest.raises(AttributeError):
+        psyscale_db.inferred_metadata("spy", pd.Timedelta("25.01W"))
+
+    stored_data = psyscale_db.get_series(spy["pkey"], pd.Timedelta("30.4D"))
+    assert stored_data is not None
+    # fmt: off
+    df = pd.DataFrame({
+        "dt": pd.to_datetime([
+            "2022-01-01T00:00:00+00:00", "2022-02-01T00:00:00+00:00", "2022-03-01T00:00:00+00:00",
+            "2022-04-01T00:00:00+00:00", "2022-05-01T00:00:00+00:00", "2022-06-01T00:00:00+00:00",
+            "2022-07-01T00:00:00+00:00", "2022-08-01T00:00:00+00:00", "2022-09-01T00:00:00+00:00",
+            "2022-10-01T00:00:00+00:00", "2022-11-01T00:00:00+00:00", "2022-12-01T00:00:00+00:00",
+            "2023-01-01T00:00:00+00:00", "2023-02-01T00:00:00+00:00", "2023-03-01T00:00:00+00:00",
+            "2023-04-01T00:00:00+00:00", "2023-05-01T00:00:00+00:00", "2023-06-01T00:00:00+00:00",
+            "2023-07-01T00:00:00+00:00", "2023-08-01T00:00:00+00:00", "2023-09-01T00:00:00+00:00",
+            "2023-10-01T00:00:00+00:00", "2023-11-01T00:00:00+00:00", "2023-12-01T00:00:00+00:00",
+            "2024-01-01T00:00:00+00:00",
+        ]),
+        "open": [
+            454.48, 428.20, 417.51, 434.15, 395.22, 396.05, 360.11, 395.19, 377.50,
+            345.49, 374.80, 394.00, 372.30, 393.16, 383.32, 398.07, 405.03, 407.23,
+            433.26, 446.74, 441.11, 420.59, 409.32, 447.16, 468.81
+        ],
+        "high": [
+            457.91, 437.06, 442.18, 438.12, 411.17, 400.58, 396.95, 414.93, 398.87,
+            376.64, 394.42, 399.63, 395.73, 405.57, 398.80, 405.19, 411.69, 434.04,
+            448.94, 447.57, 443.20, 430.01, 449.34, 470.17, 468.92
+        ],
+        "low": [
+            401.41, 391.24, 394.59, 393.51, 364.16, 348.07, 356.60, 377.24, 344.54,
+            335.95, 355.90, 363.36, 366.32, 381.65, 368.90, 392.99, 392.96, 405.66,
+            426.42, 423.01, 414.01, 401.19, 408.08, 445.30, 463.14
+        ],
+        "close": [
+            428.16, 417.34, 433.69, 395.51, 396.72, 362.68, 395.68, 377.88, 345.57,
+            373.27, 394.00, 371.43, 393.20, 383.26, 398.52, 404.54, 407.22, 432.59,
+            447.26, 440.27, 419.05, 409.10, 447.15, 467.65, 465.29
+        ],
+        "volume": [
+            2517899149, 2336203465, 2409986825, 1879176891, 2445053175, 1987346475, 1460898845,
+            1466904150, 2035963097, 2067420849, 1751203920, 1734638702, 1574249420, 1602564654,
+            2515508151, 1395131375, 1780642266, 1750741470, 1373202697, 1755190444, 1587816349,
+            1998891897, 1498184451, 1643076617, 121680005
+        ]
+    })
+    # fmt: on
+    assert_frame_equal(stored_data, df)
+
+
+def test_12_calculate_quarter_aggregate(psyscale_db: PsyscaleDB):
+    spy_pkey = psyscale_db.search_symbols({"symbol": "spy"})[0]["pkey"]
+    stored_data = psyscale_db.get_series(spy_pkey, pd.Timedelta("26W"))
+    assert stored_data is not None
+
+    # fmt: off
+    df = pd.DataFrame({
+        "dt": pd.to_datetime([
+            "2022-01-01T00:00:00+00:00",
+            "2022-07-01T00:00:00+00:00",
+            "2023-01-01T00:00:00+00:00",
+            "2023-07-01T00:00:00+00:00",
+            "2024-01-01T00:00:00+00:00",
+        ]),
+        "open": [454.48, 360.11, 372.30, 433.26, 468.81],
+        "high": [457.91, 414.93, 434.04, 470.17, 468.92],
+        "low": [348.07, 335.95, 366.32, 401.19, 463.14],
+        "close": [362.68, 371.43, 432.59, 467.65, 465.29],
+        "volume": [13575665980, 10517029563, 10618837336, 9856362455, 121680005]
+    })
+    # fmt: on
+    assert_frame_equal(stored_data, df)
+
+
+def test_13_calculate_year_aggregate(psyscale_db: PsyscaleDB):
+    spy_pkey = psyscale_db.search_symbols({"symbol": "spy"})[0]["pkey"]
+    stored_data = psyscale_db.get_series(spy_pkey, pd.Timedelta("365D"))
+    assert stored_data is not None
+
+    # fmt: off
+    df = pd.DataFrame({
+        "dt": pd.to_datetime([
+            "2022-01-01T00:00:00+00:00",
+            "2023-01-01T00:00:00+00:00",
+            "2024-01-01T00:00:00+00:00",
+        ]),
+        "open": [454.48, 372.30, 468.81],
+        "high": [457.91, 470.17, 468.92],
+        "low": [335.95, 366.32, 463.14],
+        "close": [371.43, 467.65, 465.29],
+        "volume": [24092695543, 20475199791, 121680005]
+    })
+    # fmt: on
+
+    assert_frame_equal(stored_data, df)
+
+
+# endregion
