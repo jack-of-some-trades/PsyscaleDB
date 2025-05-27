@@ -5,7 +5,7 @@ from typing import Literal, Optional, get_args
 from pandas import Timedelta, Timestamp
 from psycopg import sql
 
-from .orm import AssetTable, MetadataInfo
+from .orm import HTF_CROSSOVER, AssetTable, MetadataInfo
 from .enum import SeriesTbls, AssetTbls, Schema
 from .generic import Filter, where, limit, arg_list, order
 
@@ -60,7 +60,7 @@ def _select_origin(
     rth: bool | None = None,
     period: Timedelta = Timedelta(-1),
 ) -> sql.Composed:
-    origin = "origin_htf" if period >= Timedelta("4W") else "origin_rth" if rth else "origin_eth"
+    origin = "origin_htf" if period >= HTF_CROSSOVER else "origin_rth" if rth else "origin_eth"
     return sql.SQL("SELECT {origin} FROM {schema_name}.{table_name} WHERE asset_class = {asset_class}").format(
         schema_name=sql.Identifier(schema),
         table_name=sql.Identifier(SeriesTbls._ORIGIN),
@@ -628,7 +628,7 @@ def calculate_aggregates(
         schema=sql.Identifier(schema),
         table_name=sql.Identifier(repr(src_table)),
         origin_select=_select_origin(schema, src_table.asset_class, rth, timeframe),
-        interval=sql.Literal(str(int(timeframe.total_seconds())) + " seconds"),
+        interval=sql.Literal(_interval(timeframe)),
         inner_select_args=sql.SQL(", ").join(_inner_sel_args),
         filters=where(_filters),
         limit=limit(_limit),
@@ -679,7 +679,7 @@ def calculate_aggregates_copy(
         schema=sql.Identifier(mdata.schema_name),
         table_name=sql.Identifier(repr(mdata.table)),
         origin_select=_select_origin(mdata.schema_name, mdata.table.asset_class, rth, timeframe),
-        interval=sql.Literal(str(int(timeframe.total_seconds())) + " seconds"),
+        interval=sql.Literal(_interval(timeframe)),
         inner_select_args=sql.SQL(", ").join(_inner_sel_args),
         filters=where(_filters),
         limit=limit(_limit),
@@ -726,6 +726,29 @@ def _tick_inner_select_args(args: set[str]) -> list[sql.Composable]:
     if "vwap" in args:
         inner_select_args.append(sql.SQL("sum(price * volume) / NULLIF(SUM(volume), 0) AS vwap"))
     return inner_select_args
+
+
+def _interval(timeframe: Timedelta) -> str:
+    """
+    Get an Appropriate Interval from a Timedelta Obj, interpreting for months and years
+    This function works in tandem with metadata_partial.py::_round_large_timeframe()
+    """
+    if timeframe >= HTF_CROSSOVER:
+
+        ratio = timeframe / Timedelta("365.25D")
+        # Check if Within ~ 2 Days of a unix year.
+        if abs(ratio - round(ratio)) < 0.005:
+            return str(round(ratio)) + " years"
+
+        ratio = timeframe / Timedelta("30.44D")
+        # Check if Within ~ a Day of a unix month.
+        if abs(ratio - round(ratio)) < 0.035:
+            return str(round(ratio)) + " months"
+
+        else:
+            return str(timeframe.days) + "days"
+    else:
+        return str(int(timeframe.total_seconds())) + " seconds"
 
 
 # endregion
