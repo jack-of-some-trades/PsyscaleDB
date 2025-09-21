@@ -19,6 +19,7 @@ from typing import (
 from dataclasses import dataclass, field
 from pandas import Timedelta, Timestamp
 
+HTF_CROSSOVER = Timedelta("4W")  # >= Crossover when you start using HTF_Origin
 DEFAULT_ORIGIN_DATE = Timestamp("2000/01/03 00:00", tz="UTC")
 DEFAULT_HTF_ORIGIN_DATE = Timestamp("2000/01/01 00:00", tz="UTC")
 DEFAULT_AGGREGATES = [
@@ -181,14 +182,14 @@ class AssetTable:
 
     @property
     def origin_ts(self) -> Timestamp:
-        if self.period < Timedelta("4W"):
+        if self.period < HTF_CROSSOVER:
             return DEFAULT_ORIGIN_DATE if self._origin_ltf is None else self._origin_ltf
         else:
             return self._origin_htf if self._origin_htf is not None else DEFAULT_HTF_ORIGIN_DATE
 
     @property
     def origin(self) -> str:
-        return self.origin_ltf if self.period < Timedelta("4W") else self.origin_htf
+        return self.origin_ltf if self.period < HTF_CROSSOVER else self.origin_htf
 
     @property
     def origin_ltf(self) -> str:

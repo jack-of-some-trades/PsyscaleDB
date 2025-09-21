@@ -51,7 +51,8 @@ def test_01_client_initilization_from_env(test_container: PostgresContainer):
     ]
 
     for var in env_vars:
-        os.environ.pop(var)
+        if var in os.environ:
+            os.environ.pop(var)
 
     with pytest.raises(AttributeError):
         # No Environment variables are set, should error

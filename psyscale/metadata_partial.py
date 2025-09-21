@@ -5,6 +5,7 @@ from typing import Any
 
 from pandas import Timedelta, Timestamp
 from psyscale.core import TupleCursor
+from psyscale.psql.orm import HTF_CROSSOVER
 from psyscale.timeseries_partial import TimeseriesPartialAbstract
 
 from .psql import (
@@ -36,7 +37,12 @@ class MetadataPartial(TimeseriesPartialAbstract):
         Return the Metadata for a symbol at a given timeframe. This function will use the stored
         metadata to infer what series data can be derived from the stored series data in the event
         the desired timeframe / rth state is not directly stored.
+
+        Large Timeframes, (Months, Quarters, Years), Can be Passed by passing timedeltas that are close to
+        their unix equivalent values. (~30.4 Days / Month, ~365.25 Days / Years)
         """
+        timeframe = _round_large_timeframe(timeframe)
+
         with self._cursor(dict_cursor=True) as cursor:
             # region ---- Fetch asset_class and stored state
             if isinstance(symbol, str):
@@ -281,3 +287,26 @@ def _missing_metadata(
         for table in missing_tables
     ]
     return missing_metadata
+
+
+def _round_large_timeframe(timeframe: Timedelta) -> Timedelta:
+    """
+    Round Timeframes greater than the HTF_Origin Cross over to unix Week/Month/Year Values
+    This function works in tandem with timeseries.py::_interval()
+    """
+    if timeframe < HTF_CROSSOVER:
+        return timeframe
+
+    ratio = timeframe / Timedelta("365.25D")
+    # Check if Within ~ 2 Days of a unix year.
+    if abs(ratio - round(ratio)) < 0.005:
+        # Return Timedelta of some multiple of 365 days. Will be translated into years interval
+        return Timedelta(days=round(ratio) * 365)
+
+    ratio = timeframe / Timedelta("30.44D")
+    # Check if Within ~ a Day of a unix month.
+    if abs(ratio - round(ratio)) < 0.035:
+        # Return Timedelta of some multiple of 30 days. Will be translated into months interval
+        return Timedelta(days=round(ratio) * 30)
+
+    return timeframe

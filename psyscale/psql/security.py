@@ -11,7 +11,7 @@ from typing import (
 from psycopg import sql
 
 from .enum import Schema, AssetTbls
-from .generic import Filter, where, arg_list, limit, select
+from .generic import Argument, Filter, update_args, where, arg_list, limit, select
 
 # pylint: disable=missing-function-docstring, protected-access
 
@@ -186,6 +186,37 @@ def upsert_copied_symbols(source: str) -> sql.Composed:
         schema_name=sql.Identifier(Schema.SECURITY),
         table_name=sql.Identifier(AssetTbls.SYMBOLS),
         source=sql.Literal(source),
+    )
+
+
+def update_symbols_table(
+    assignments: list[Argument],
+    attr_assignments: dict[str, Any],
+    filters: list[Filter],
+) -> sql.Composed:
+    if len(assignments) == 0 and len(attr_assignments) == 0:
+        raise ValueError("Attempting to Update Symbols Table when No Argument updates were given.")
+
+    # Form the base update update set for all the normal columns.
+    assignments_sql = update_args(assignments) if len(assignments) > 0 else None
+
+    # Merge update the Attrs Column with provided attrs dict.
+    attrs_update = (
+        sql.SQL("attrs = COALESCE(attrs, '{{}}'::jsonb) || {attr_updates}").format(
+            attr_updates=sql.Literal(dumps(attr_assignments)),
+        )
+        if len(attr_assignments) > 0
+        else None
+    )
+
+    # Merge the two possible update statements together.
+    assignments_sql = sql.SQL(", ").join(v for v in [assignments_sql, attrs_update] if v is not None)
+
+    return sql.SQL("UPDATE {schema_name}.{table_name} SET {args} {filter};").format(
+        schema_name=sql.Identifier(Schema.SECURITY),
+        table_name=sql.Identifier(AssetTbls.SYMBOLS),
+        args=assignments_sql,
+        filter=where(filters),
     )
 
 
