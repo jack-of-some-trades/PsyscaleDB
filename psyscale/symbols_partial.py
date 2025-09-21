@@ -217,14 +217,14 @@ class SymbolsPartial(PsyscaleCore):
         Update a Single Symbol or list of symbols with the given arguments.
 
         This method is remained general for utility purposes. It should generally just be used to
-        update the stored_[tick/minute/aggregate] columns. All Other parameters should remain
+        update the stored_[tick/minute/aggregate] or attrs columns. All Other parameters should remain
         constant by nature. To insert symbols see the API_Extension that allows this to be done
         in bulk.
 
-        Note: Setting any stored column = False does not Delete any Data.
+        Note: Setting any stored column = False does not Delete Data.
 
         :params:
-        - symobls : int, str, or list[int | str]
+        - symbols : int, str, or list[int | str]
             - Identifying symbol (str) or primary key (int) of the symbol to update.
             May be a single value or list of values.
             - Interger Pkeys are preferred method since multiple rows of the same symbol may be
@@ -232,15 +232,16 @@ class SymbolsPartial(PsyscaleCore):
             (symbol, exchange, source) combinations while pkeys are always unique.
 
         - args : Dict[SymbolArgs, Any]
-            - A Dictionary of Column Values to update. If PKEY is passed as a Key it will be
-            ignored. Extra Keys are Ignored.
+            - A Dictionary of Columns:Values to update the table with.
+            - If PKEY is passed as it will be ignored.
+            - Extra Keys will be separated out merge updated with the 'attrs' column.
             - Note: This can throw a psycopg.Database Error if passed an update to Symbol, Source,
             or Exchange that would result in a change that would violate the UNIQUE flag on those
             collective parameters.
 
         :returns: Boolean, True on Successful Update.
         """
-        # Convert varierty of symbol inputs to consistent list of integer pkeys
+        # Convert variety of symbol inputs to consistent list of integer pkeys
         if isinstance(symbols, int):
             pkeys = [symbols]
         elif isinstance(symbols, str):
@@ -250,18 +251,30 @@ class SymbolsPartial(PsyscaleCore):
                 return False
         else:
             _tmp_list = [(self._get_pkey(symbol), symbol) for symbol in symbols]
-            pkeys = [_tmp_list for pkey, _ in _tmp_list if pkey is not None]
+            pkeys = [pkey for pkey, _ in _tmp_list if pkey is not None]
             unknown_symbols = [symbol for pkey, symbol in _tmp_list if pkey is None]
-            log.warning("Cannot Update Symbol(s) %s, symbol is not known.", unknown_symbols)
+            if len(unknown_symbols) > 0:
+                log.warning("Cannot Update Symbol(s) %s, symbol(s) are not known.", unknown_symbols)
 
         if "pkey" in args:
             args.pop("pkey")
 
         _args = [(k, v) for k, v in args.items() if k in SYMBOL_ARGS]
-        if len(_args) == 0:
+        _attr_args = dict([(k, v) for k, v in args.items() if k not in SYMBOL_ARGS])
+        if len(_args) == 0 and len(_attr_args) == 0:
             log.warning(
                 "Attemping to update Database symbol but no arg updates where given. pkey(s) = %s",
                 pkeys,
+            )
+            return False
+        if len(_attr_args) > 0 and "attrs" in args:
+            log.error(
+                """
+                Attemping to update Database symbol attrs by directly providing an attrs object, and 
+                indirectly by providing extra keys to the 'args' dict. Only one method is allowed at a time.
+                update args = %s
+                """,
+                args,
             )
             return False
 
@@ -273,7 +286,7 @@ class SymbolsPartial(PsyscaleCore):
         _filter = sql.SQL("pkey=ANY(ARRAY[{pkeys}])").format(pkeys=sql.SQL(",").join(sql.Literal(v) for v in pkeys))
 
         with self._cursor() as cursor:
-            cursor.execute(self[Op.UPDATE, AssetTbls.SYMBOLS](_args, _filter))
+            cursor.execute(self[Op.UPDATE, AssetTbls.SYMBOLS](_args, _attr_args, _filter))
             return cursor.statusmessage is not None and cursor.statusmessage == "UPDATE 1"
 
         return False  # Default return if cursor throws error

@@ -119,10 +119,6 @@ def test_upsert_ignore_conflict(psyscale_db, clean_symbols_table, symbols_df):
     result = psyscale_db.search_symbols({"symbol": "AAPL", "source": "test_api"}, strict_symbol_search="=")
     assert result[0]["name"] == "Apple Inc."  # Original name retained
 
-    psyscale_db.execute(
-        sql.SQL("TRUNCATE TABLE {schema}.{table};").format(schema=Schema.SECURITY, table=AssetTbls.SYMBOLS)
-    )
-
 
 def test_upsert_updates_on_conflict(psyscale_db, clean_symbols_table, symbols_df):
     # Initial insert
@@ -145,9 +141,99 @@ def test_upsert_updates_on_conflict(psyscale_db, clean_symbols_table, symbols_df
     result = psyscale_db.search_symbols({"symbol": "GOOG", "source": "test_api"}, strict_symbol_search="=")
     assert result[0]["name"] == "Alphabet Inc. Class A"
 
-    psyscale_db.execute(
-        sql.SQL("TRUNCATE TABLE {schema}.{table};").format(schema=Schema.SECURITY, table=AssetTbls.SYMBOLS)
-    )
+
+def test_symbol_update(psyscale_db, clean_symbols_table, symbols_df):
+    # Initial insert
+    psyscale_db.upsert_securities(symbols_df, source="test_api")
+
+    # Confirm the insert
+    result = psyscale_db.search_symbols({"symbol": "GOOG", "source": "test_api"}, strict_symbol_search="=")
+    assert result[0]["name"] == "Alphabet Inc."
+
+    # Confirm nothing is set to be stored
+    tech_symbols = psyscale_db.search_symbols({"store_minute": True}, strict_symbol_search=True)
+    assert len(tech_symbols) == 0
+
+    aapl = psyscale_db.search_symbols({"symbol": "AAPL"}, attrs_search=True)[0]
+
+    # Modify the table
+    psyscale_db.update_symbol(aapl["pkey"], {"store_minute": True})
+
+    # Confirm the update
+    tech_symbols = psyscale_db.search_symbols({"store_minute": True}, strict_symbol_search=True)
+    assert len(tech_symbols) == 1
+
+
+def test_multi_symbol_update(psyscale_db, clean_symbols_table, symbols_df):
+    # Initial insert
+    psyscale_db.upsert_securities(symbols_df, source="test_api")
+
+    # Confirm the insert
+    result = psyscale_db.search_symbols({"symbol": "GOOG", "source": "test_api"}, strict_symbol_search="=")
+    assert result[0]["name"] == "Alphabet Inc."
+
+    # Pull the symbols with the 'technology' sector attr
+    tech_symbols = psyscale_db.search_symbols({"sector": "Technology"}, attrs_search=True)
+    assert len(tech_symbols) == 2
+
+    symbols = [row["symbol"] for row in tech_symbols]
+
+    # modify both via update_symbol in a single call
+    psyscale_db.update_symbol(symbols, {"sector": "Tech"})
+
+    # Confirm the update
+    tech_symbols = psyscale_db.search_symbols({"sector": "Technology"}, attrs_search=True, strict_symbol_search=True)
+    assert len(tech_symbols) == 0
+
+    tech_symbols = psyscale_db.search_symbols({"sector": "Tech"}, attrs_search=True, strict_symbol_search=True)
+    assert len(tech_symbols) == 2
+
+
+def test_hybrid_symbol_update(psyscale_db, clean_symbols_table, symbols_df):
+    # Initial insert
+    psyscale_db.upsert_securities(symbols_df, source="test_api")
+
+    # Confirm the insert
+    result = psyscale_db.search_symbols({"symbol": "GOOG", "source": "test_api"}, strict_symbol_search="=")
+    assert result[0]["name"] == "Alphabet Inc."
+
+    # Confirm nothing is set to be stored
+    tech_symbols = psyscale_db.search_symbols({"store_minute": True}, strict_symbol_search=True)
+    assert len(tech_symbols) == 0
+
+    # Pull the symbols with the 'technology' sector attr
+    tech_symbols = psyscale_db.search_symbols({"sector": "Technology"}, attrs_search=True)
+    assert len(tech_symbols) == 2
+
+    symbols = [row["symbol"] for row in tech_symbols]
+
+    # Modify Both Symbol's Attrs column and a normal column at the same time
+    psyscale_db.update_symbol(symbols, {"sector": "Tech", "store_minute": True})
+
+    # Confirm the update
+    tech_symbols = psyscale_db.search_symbols({"sector": "Technology"}, attrs_search=True, strict_symbol_search=True)
+    assert len(tech_symbols) == 0
+
+    tech_symbols = psyscale_db.search_symbols({"sector": "Tech"}, attrs_search=True, strict_symbol_search=True)
+    assert len(tech_symbols) == 2
+
+    tech_symbols = psyscale_db.search_symbols({"store_minute": True}, strict_symbol_search=True)
+    assert len(tech_symbols) == 2
+
+
+def test_multi_attr_update_violation(psyscale_db, symbols_df, clean_symbols_table, caplog):
+    # Insert test symbols
+    psyscale_db.upsert_securities(symbols_df, source="UnitTest")
+
+    # Retrieve pkey of "AAPL"
+    aapl = psyscale_db.search_symbols({"symbol": "AAPL", "source": "UnitTest"}, strict_symbol_search="=")
+    assert aapl and "pkey" in aapl[0]
+    pkey = aapl[0]["pkey"]
+
+    # Check Symbols table shows error on multi attr update
+    with caplog.at_level("ERROR"):
+        result = psyscale_db.update_symbol(pkey, {"attrs": {"test": True}, "my_attr_arg": True})
+        assert result is False
 
 
 # endregion

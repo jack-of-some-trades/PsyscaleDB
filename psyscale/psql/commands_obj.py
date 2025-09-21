@@ -4,7 +4,6 @@ from __future__ import annotations
 from copy import deepcopy
 from enum import StrEnum
 from logging import getLogger
-from functools import partial
 from typing import Optional, Tuple, TypeAlias, Callable
 
 from psycopg import sql
@@ -12,7 +11,7 @@ from psycopg import sql
 from . import generic as gen
 from . import security as sec
 from . import timeseries as ts
-from .enum import Operation, Schema, GenericTbls, AssetTbls, SeriesTbls
+from .enum import Operation, GenericTbls, AssetTbls, SeriesTbls
 
 log = getLogger("psyscale_log")
 
@@ -103,7 +102,7 @@ OPERATION_MAP: OperationMap = {
     Operation.UPDATE: {
         GenericTbls.TABLE: gen.update,
         SeriesTbls._ORIGIN: ts.update_origin,
-        AssetTbls.SYMBOLS: partial(gen.update, Schema.SECURITY, AssetTbls.SYMBOLS),
+        AssetTbls.SYMBOLS: sec.update_symbols_table,
     },
     Operation.COPY: {
         AssetTbls.SYMBOLS_BUFFER: sec.copy_symbols,
